@@ -1,0 +1,425 @@
+const { createApp, ref, reactive, computed, watch, onMounted, nextTick } = Vue;
+const API = '/api';
+
+const app = createApp({
+    setup() {
+        // ==================== 全局状态 ====================
+        const currentPage = ref('home');
+        const stats = ref({});
+        const persons = ref([]);
+        const selectedUser = ref('');
+
+        const navItems = [
+            { page: 'home', icon: '\u{1F3E0}', label: '首页' },
+            { page: 'import', icon: '\u{1F4E5}', label: '数据导入' },
+            { page: 'analysis', icon: '\u{1F4CA}', label: '交易分析' },
+            { page: 'graph', icon: '\u{1F578}', label: '关系图谱' },
+            { page: 'profile', icon: '\u{1F464}', label: '人员画像' },
+            { page: 'agent', icon: '\u{1F916}', label: 'AI 智能侦查' },
+        ];
+
+        const homeCards = [
+            { page: 'import', icon: '\u{1F4E5}', title: '数据导入', desc: '上传财付通交易明细与注册信息, 系统自动清洗融合并入库。' },
+            { page: 'analysis', icon: '\u{1F4CA}', title: '交易分析', desc: '六大异常检测算法: 化整为零、深夜交易、财富突增等。' },
+            { page: 'graph', icon: '\u{1F578}', title: '关系图谱', desc: '交互式资金流向网络, 识别过桥账户和资金回流。' },
+            { page: 'profile', icon: '\u{1F464}', title: '人员画像', desc: '综合画像报告: 风险评级、关系人、侦查建议。' },
+            { page: 'agent', icon: '\u{1F916}', title: 'AI 智能侦查', desc: '大模型对话式分析, 自然语言查询, 自动调用工具。' },
+            { page: 'import', icon: '\u2139', title: '系统说明', desc: '前后端分离架构, FastAPI后端 + Vue3前端。' },
+        ];
+
+        // ==================== 数据加载 ====================
+        async function loadStats() {
+            try {
+                const [s, p] = await Promise.all([
+                    axios.get(`${API}/stats`),
+                    axios.get(`${API}/persons`),
+                ]);
+                stats.value = s.data;
+                persons.value = p.data;
+            } catch (e) { console.error(e); }
+        }
+
+        // ==================== 数据导入 ====================
+        const importTab = ref('upload');
+        const uploadFiles = reactive({ trades: null, reg: null });
+        const uploading = ref(false);
+        const scanDir = ref('');
+        const scanning = ref(false);
+
+        async function doUpload() {
+            uploading.value = true;
+            try {
+                const form = new FormData();
+                form.append('trades', uploadFiles.trades);
+                form.append('reginfo', uploadFiles.reg);
+                const res = await axios.post(`${API}/upload`, form);
+                ElementPlus.ElMessage.success(`导入成功: ${res.data.name}(${res.data.user_id}), ${res.data.tx_count}笔交易`);
+                uploadFiles.trades = null;
+                uploadFiles.reg = null;
+                // 清除前端缓存
+                analysisCache.clear();
+                graphCache.clear();
+                await loadStats();
+            } catch (e) {
+                ElementPlus.ElMessage.error('导入失败: ' + (e.response?.data?.detail || e.message));
+            }
+            uploading.value = false;
+        }
+
+        async function doScan() {
+            if (!scanDir.value) return;
+            scanning.value = true;
+            try {
+                const res = await axios.post(`${API}/auto-import?directory=${encodeURIComponent(scanDir.value)}`);
+                const results = res.data;
+                let ok = 0, fail = 0;
+                results.forEach(r => {
+                    if (r.error) { fail++; ElementPlus.ElMessage.error(r.error); }
+                    else { ok++; ElementPlus.ElMessage.success(`导入: ${r.name}(${r.user_id}), ${r.tx_count}笔`); }
+                });
+                if (ok > 0) {
+                    // 清除前端缓存
+                    analysisCache.clear();
+                    graphCache.clear();
+                    await loadStats();
+                }
+            } catch (e) {
+                ElementPlus.ElMessage.error('扫描失败: ' + e.message);
+            }
+            scanning.value = false;
+        }
+
+        async function doClear() {
+            try {
+                await axios.post(`${API}/clear`);
+                ElementPlus.ElMessage.success('已清空所有数据');
+                // 清除前端缓存
+                analysisCache.clear();
+                graphCache.clear();
+                await loadStats();
+            } catch (e) {
+                ElementPlus.ElMessage.error('清空失败: ' + e.message);
+            }
+        }
+
+        // ==================== 交易分析 ====================
+        const analysisData = ref(null);
+        const anomalyData = ref(null);
+        const counterparts = ref([]);
+        const monthlyData = ref([]);
+        const hourData = ref([]);
+        const chartMonthly = ref(null);
+        const chartHour = ref(null);
+        const analysisLoading = ref(false);
+        const activeAnalysisTab = ref('monthly');
+        const analysisCache = new Map(); // 前端缓存
+
+        const analysisSummary = computed(() => {
+            if (!analysisData.value) return {};
+            const tx = analysisData.value;
+            return {
+                totalCount: tx.length,
+                totalIncome: tx.filter(t => t.direction === '入').reduce((s, t) => s + t.amount_yuan, 0),
+                totalExpense: tx.filter(t => t.direction === '出').reduce((s, t) => s + t.amount_yuan, 0),
+            };
+        });
+
+        async function loadAnalysis() {
+            if (!selectedUser.value) {
+                ElementPlus.ElMessage.warning('请先选择分析对象');
+                return;
+            }
+            const uid = selectedUser.value;
+
+            // 检查缓存
+            if (analysisCache.has(uid)) {
+                const cached = analysisCache.get(uid);
+                analysisData.value = cached.tx;
+                anomalyData.value = cached.anomaly;
+                counterparts.value = cached.counterparts;
+                monthlyData.value = cached.monthly;
+                hourData.value = cached.hour;
+                await nextTick();
+                renderMonthlyChart();
+                if (activeAnalysisTab.value === 'hour') {
+                    renderHourChart();
+                }
+                return;
+            }
+
+            analysisLoading.value = true;
+            try {
+                const [txRes, anomRes, cpRes, monthRes, hourRes] = await Promise.all([
+                    axios.get(`${API}/transactions/${uid}?limit=9999`),
+                    axios.get(`${API}/anomaly/${uid}`),
+                    axios.get(`${API}/counterparts/${uid}?top_n=20`),
+                    axios.get(`${API}/monthly/${uid}`),
+                    axios.get(`${API}/hour-distribution/${uid}`),
+                ]);
+                analysisData.value = txRes.data;
+                anomalyData.value = anomRes.data;
+                counterparts.value = cpRes.data;
+                monthlyData.value = monthRes.data;
+                hourData.value = hourRes.data;
+
+                // 保存到缓存
+                analysisCache.set(uid, {
+                    tx: txRes.data,
+                    anomaly: anomRes.data,
+                    counterparts: cpRes.data,
+                    monthly: monthRes.data,
+                    hour: hourRes.data,
+                });
+
+                await nextTick();
+                renderMonthlyChart();
+                // 时段分布只在激活时渲染
+                if (activeAnalysisTab.value === 'hour') {
+                    renderHourChart();
+                }
+            } catch (e) {
+                ElementPlus.ElMessage.error('分析失败: ' + e.message);
+                console.error(e);
+            }
+            analysisLoading.value = false;
+        }
+
+        function onAnalysisTabChange(tabName) {
+            activeAnalysisTab.value = tabName;
+            nextTick(() => {
+                if (tabName === 'monthly') renderMonthlyChart();
+                if (tabName === 'hour') renderHourChart();
+            });
+        }
+
+        function renderMonthlyChart() {
+            if (!chartMonthly.value || !monthlyData.value.length) return;
+            let chart = echarts.getInstanceByDom(chartMonthly.value);
+            if (!chart) chart = echarts.init(chartMonthly.value);
+            const months = monthlyData.value.map(d => d.month);
+            chart.setOption({
+                tooltip: { trigger: 'axis' },
+                legend: { data: ['入账', '出账'] },
+                xAxis: { type: 'category', data: months, axisLabel: { rotate: 45 } },
+                yAxis: { type: 'value', name: '金额(元)' },
+                series: [
+                    { name: '入账', type: 'bar', data: monthlyData.value.map(d => d.income), itemStyle: { color: '#67c23a' } },
+                    { name: '出账', type: 'bar', data: monthlyData.value.map(d => d.expense), itemStyle: { color: '#f56c6c' } },
+                ],
+                grid: { bottom: 80 },
+                animation: true, // 启用动画
+                animationDuration: 800, // 动画时长
+            });
+            chart.resize(); // 确保图表大小正确
+        }
+
+        function renderHourChart() {
+            if (!chartHour.value || !hourData.value.length) return;
+            let chart = echarts.getInstanceByDom(chartHour.value);
+            if (!chart) chart = echarts.init(chartHour.value);
+            chart.setOption({
+                tooltip: { trigger: 'axis' },
+                xAxis: { type: 'category', data: hourData.value.map(d => d.hour + '时'), name: '时段' },
+                yAxis: { type: 'value', name: '交易笔数' },
+                series: [{
+                    type: 'bar',
+                    data: hourData.value.map(d => ({
+                        value: d.count,
+                        itemStyle: { color: d.hour >= 0 && d.hour < 6 ? '#f56c6c' : '#409eff' }
+                    })),
+                }],
+                animation: true, // 启用动画
+                animationDuration: 800, // 动画时长
+                markArea: {
+                    silent: true,
+                    data: [[
+                        { xAxis: '0时', itemStyle: { color: 'rgba(245, 108, 108, 0.1)' } },
+                        { xAxis: '5时' }
+                    ]],
+                    label: { show: true, position: 'top', formatter: '深夜时段' }
+                }
+            });
+            chart.resize(); // 确保图表大小正确
+        }
+
+        // ==================== 关系图谱 ====================
+        const graphData = ref(null);
+        const graphLoading = ref(false);
+        const graphIframeSrc = ref('');
+        const graphCache = new Map(); // 图谱缓存
+
+        // 将 HTML 字符串转为 Blob URL 供 iframe 加载，避免 srcdoc CSP 限制
+        function setGraphIframe(html) {
+            // 释放旧的 Blob URL
+            if (graphIframeSrc.value && graphIframeSrc.value.startsWith('blob:')) {
+                URL.revokeObjectURL(graphIframeSrc.value);
+            }
+            if (!html) {
+                graphIframeSrc.value = '';
+                return;
+            }
+            const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+            graphIframeSrc.value = URL.createObjectURL(blob);
+        }
+
+        async function loadGraph() {
+            if (!selectedUser.value) {
+                ElementPlus.ElMessage.warning('请先选择分析对象');
+                return;
+            }
+
+            const uid = selectedUser.value;
+
+            // 检查缓存
+            if (graphCache.has(uid)) {
+                const cached = graphCache.get(uid);
+                graphData.value = cached;
+                await nextTick();
+                setGraphIframe(cached.graph_html || '');
+                return;
+            }
+
+            graphLoading.value = true;
+            graphData.value = null;
+            graphIframeSrc.value = '';
+            try {
+                const res = await axios.get(`${API}/graph/${uid}`);
+                graphData.value = res.data;
+
+                // 保存到缓存
+                graphCache.set(uid, res.data);
+
+                await nextTick();
+                setGraphIframe(res.data.graph_html || '');
+            } catch (e) {
+                ElementPlus.ElMessage.error('图谱加载失败: ' + e.message);
+                console.error(e);
+            }
+            graphLoading.value = false;
+        }
+
+        // ==================== 人员画像 ====================
+        const profileData = ref(null);
+        const profileLoading = ref(false);
+        const profileExpanded = ref(['info', 'risk', 'contacts']);
+
+        async function loadProfile() {
+            if (!selectedUser.value) return;
+            profileLoading.value = true;
+            try {
+                const res = await axios.get(`${API}/profile/${selectedUser.value}`);
+                profileData.value = res.data;
+            } catch (e) { console.error(e); }
+            profileLoading.value = false;
+        }
+
+        function downloadReport() {
+            if (!profileData.value?.report_text) return;
+            const blob = new Blob([profileData.value.report_text], { type: 'text/plain;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `画像报告_${profileData.value.person?.name || 'unknown'}.txt`;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        // ==================== AI Agent ====================
+        const chatMessages = ref([]);
+        const chatHistory = ref([]);
+        const chatInput = ref('');
+        const chatLoading = ref(false);
+        const chatBox = ref(null);
+        const providers = ref({});
+        const showApiKey = ref(false);
+        const agentConfig = reactive({
+            provider: 'deepseek',
+            model: 'deepseek-chat',
+            apiKey: '',
+            baseUrl: '',
+        });
+        const currentProviderModels = computed(() => {
+            return providers.value[agentConfig.provider]?.models || [];
+        });
+        const sampleQuestions = [
+            '帮我分析李四的资金异常情况',
+            '李四与宗正貌之间有哪些交易?',
+            '生成李四的完整画像报告',
+            '李四在2023年3-5月有什么异常?',
+            '哪些月份李四的入账金额异常高?',
+        ];
+
+        async function loadProviders() {
+            try {
+                const res = await axios.get(`${API}/providers`);
+                providers.value = res.data;
+            } catch (e) { console.error(e); }
+        }
+
+        function onProviderChange() {
+            const p = providers.value[agentConfig.provider];
+            if (p) agentConfig.model = p.default_model || '';
+        }
+
+        function renderMd(text) {
+            try { return marked.parse(text || ''); }
+            catch { return text; }
+        }
+
+        async function sendChat() {
+            const msg = chatInput.value.trim();
+            if (!msg || chatLoading.value) return;
+            chatMessages.value.push({ role: 'user', content: msg });
+            chatInput.value = '';
+            chatLoading.value = true;
+            await nextTick();
+            if (chatBox.value) chatBox.value.scrollTop = chatBox.value.scrollHeight;
+
+            try {
+                const apiMessages = [...chatHistory.value, { role: 'user', content: msg }];
+                const res = await axios.post(`${API}/chat`, {
+                    messages: apiMessages,
+                    provider_id: agentConfig.provider,
+                    api_key: agentConfig.apiKey,
+                    model: agentConfig.model,
+                    base_url: agentConfig.baseUrl,
+                });
+                const reply = res.data.reply;
+                chatMessages.value.push({ role: 'assistant', content: reply });
+                chatHistory.value = res.data.history || apiMessages.concat([{ role: 'assistant', content: reply }]);
+            } catch (e) {
+                chatMessages.value.push({ role: 'assistant', content: '请求失败: ' + e.message });
+            }
+            chatLoading.value = false;
+            await nextTick();
+            if (chatBox.value) chatBox.value.scrollTop = chatBox.value.scrollHeight;
+        }
+
+        // ==================== 初始化 ====================
+        onMounted(() => {
+            loadStats();
+            loadProviders();
+        });
+
+        return {
+            currentPage, stats, persons, selectedUser, navItems, homeCards,
+            // 导入
+            importTab, uploadFiles, uploading, doUpload, scanDir, scanning, doScan, doClear,
+            // 分析
+            analysisData, anomalyData, counterparts, analysisSummary,
+            analysisLoading, activeAnalysisTab,
+            loadAnalysis, chartMonthly, chartHour, onAnalysisTabChange,
+            // 图谱
+            graphData, graphLoading, graphIframeSrc, loadGraph,
+            // 画像
+            profileData, profileLoading, profileExpanded, loadProfile, downloadReport,
+            // Agent
+            chatMessages, chatHistory, chatInput, chatLoading, chatBox,
+            providers, agentConfig, showApiKey, currentProviderModels, sampleQuestions,
+            onProviderChange, sendChat, renderMd,
+        };
+    }
+});
+
+app.use(ElementPlus);
+app.mount('#app');

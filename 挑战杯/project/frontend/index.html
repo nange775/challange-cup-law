@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>检察侦查画像系统</title>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css">
+    <script src="https://unpkg.com/element-plus"></script>
+    <script src="https://unpkg.com/echarts@5/dist/echarts.min.js"></script>
+    <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked@9.1.6/marked.min.js"></script>
+    <link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+    <div id="app">
+        <div class="layout">
+            <!-- 侧边栏 -->
+            <div class="sidebar">
+                <div class="logo">检察侦查画像系统</div>
+                <div class="nav-menu">
+                    <div v-for="item in navItems" :key="item.page"
+                         :class="['nav-item', {active: currentPage===item.page}]"
+                         @click="currentPage=item.page">
+                        <span class="nav-icon">{{item.icon}}</span>
+                        <span>{{item.label}}</span>
+                    </div>
+                </div>
+                <div class="sidebar-stats">
+                    <div>人员: {{stats.person_count || 0}} 人</div>
+                    <div>交易: {{(stats.tx_count||0).toLocaleString()}} 笔</div>
+                    <div>银行卡: {{stats.card_count || 0}} 张</div>
+                </div>
+            </div>
+
+            <!-- 主内容区 -->
+            <div class="main-content">
+
+                <!-- ========== 首页 ========== -->
+                <div v-if="currentPage==='home'" class="page">
+                    <div class="page-header">
+                        <h1>检察侦查画像系统</h1>
+                        <p class="subtitle">检察侦查画像模型 — 一种数据处理、分析、线索分析一体化的侦查参考工具</p>
+                    </div>
+                    <div class="card-grid">
+                        <div v-for="card in homeCards" :key="card.page" class="home-card" @click="currentPage=card.page">
+                            <div class="home-card-icon">{{card.icon}}</div>
+                            <h3>{{card.title}}</h3>
+                            <p>{{card.desc}}</p>
+                        </div>
+                    </div>
+                    <div class="footer-note">
+                        本系统用于辅助检察侦查工作, 分析结果仅供参考。所有标记的异常需结合案件实际情况进一步核实。
+                    </div>
+                </div>
+
+                <!-- ========== 数据导入 ========== -->
+                <div v-if="currentPage==='import'" class="page">
+                    <div class="page-header"><h2>数据导入</h2></div>
+
+                    <div class="section-card">
+                        <el-tabs v-model="importTab">
+                            <el-tab-pane label="手动上传" name="upload">
+                                <div class="upload-area">
+                                    <div class="upload-row">
+                                        <div class="upload-item">
+                                            <div class="upload-label">交易明细文件</div>
+                                            <el-upload ref="tradesUpload" :auto-upload="false" :limit="1" accept=".xls,.xlsx"
+                                                :on-change="(f)=>{uploadFiles.trades=f.raw}" :on-remove="()=>{uploadFiles.trades=null}">
+                                                <template #trigger>
+                                                    <el-button type="primary">选择 TenpayTrades.xls</el-button>
+                                                </template>
+                                                <template #tip><div class="upload-tip">支持 .xls / .xlsx 格式</div></template>
+                                            </el-upload>
+                                        </div>
+                                        <div class="upload-item">
+                                            <div class="upload-label">注册信息文件</div>
+                                            <el-upload ref="regUpload" :auto-upload="false" :limit="1" accept=".xls,.xlsx"
+                                                :on-change="(f)=>{uploadFiles.reg=f.raw}" :on-remove="()=>{uploadFiles.reg=null}">
+                                                <template #trigger>
+                                                    <el-button type="primary">选择 TenpayRegInfo1.xls</el-button>
+                                                </template>
+                                                <template #tip><div class="upload-tip">支持 .xls / .xlsx 格式</div></template>
+                                            </el-upload>
+                                        </div>
+                                    </div>
+                                    <el-button type="success" size="large" @click="doUpload" :loading="uploading"
+                                        :disabled="!uploadFiles.trades||!uploadFiles.reg" style="margin-top:20px">
+                                        导入数据
+                                    </el-button>
+                                </div>
+                            </el-tab-pane>
+                            <el-tab-pane label="自动扫描目录" name="scan">
+                                <div style="display:flex;gap:12px;align-items:flex-start;margin-top:12px">
+                                    <el-input v-model="scanDir" placeholder="输入包含 Tenpay 数据的目录路径" style="flex:1" size="large"/>
+                                    <el-button type="success" size="large" @click="doScan" :loading="scanning">扫描并导入</el-button>
+                                </div>
+                            </el-tab-pane>
+                        </el-tabs>
+                    </div>
+
+                    <div class="section-card" style="margin-top:20px">
+                        <div class="section-title">当前数据概览</div>
+                        <div class="stats-row">
+                            <div class="stat-box">
+                                <div class="stat-value">{{stats.person_count || 0}}</div>
+                                <div class="stat-label">已录入人员</div>
+                            </div>
+                            <div class="stat-box">
+                                <div class="stat-value">{{(stats.tx_count||0).toLocaleString()}}</div>
+                                <div class="stat-label">交易记录</div>
+                            </div>
+                            <div class="stat-box">
+                                <div class="stat-value">{{stats.card_count || 0}}</div>
+                                <div class="stat-label">银行卡</div>
+                            </div>
+                        </div>
+                        <el-table :data="persons" stripe border style="width:100%;margin-top:16px" v-if="persons.length">
+                            <el-table-column prop="user_id" label="用户ID" width="130"/>
+                            <el-table-column prop="name" label="姓名" width="100"/>
+                            <el-table-column prop="id_card" label="身份证号" width="210"/>
+                            <el-table-column prop="phone" label="手机号" width="150"/>
+                            <el-table-column prop="reg_time" label="注册时间" min-width="180"/>
+                        </el-table>
+                        <div v-else class="empty-hint">暂无数据, 请先导入。</div>
+                    </div>
+
+                    <div class="section-card" style="margin-top:20px">
+                        <el-popconfirm title="确定要清空所有数据吗?" @confirm="doClear">
+                            <template #reference>
+                                <el-button type="danger" plain size="small">清空所有数据</el-button>
+                            </template>
+                        </el-popconfirm>
+                    </div>
+                </div>
+
+                <!-- ========== 交易分析 ========== -->
+                <div v-if="currentPage==='analysis'" class="page">
+                    <div class="page-header">
+                        <h2>交易分析与异常检测</h2>
+                        <div style="display:flex;gap:10px;align-items:center">
+                            <el-select v-model="selectedUser" placeholder="选择分析对象" style="width:250px">
+                                <el-option v-for="p in persons" :key="p.user_id" :label="p.name+'('+p.user_id+')'" :value="p.user_id"/>
+                            </el-select>
+                            <el-button type="primary" @click="loadAnalysis" :loading="analysisLoading" :disabled="!selectedUser">
+                                <span v-if="!analysisLoading">▶ 执行分析</span>
+                                <span v-else>分析中...</span>
+                            </el-button>
+                        </div>
+                    </div>
+                    <div v-loading="analysisLoading" element-loading-text="正在分析数据，请稍候..." style="min-height:100px">
+                    <div v-if="analysisData">
+                        <div class="stats-row">
+                            <div class="stat-box"><div class="stat-value">{{analysisSummary.totalCount}}</div><div class="stat-label">交易总笔数</div></div>
+                            <div class="stat-box"><div class="stat-value">{{analysisSummary.totalIncome.toLocaleString()}}</div><div class="stat-label">总入账(元)</div></div>
+                            <div class="stat-box"><div class="stat-value">{{analysisSummary.totalExpense.toLocaleString()}}</div><div class="stat-label">总出账(元)</div></div>
+                            <div class="stat-box"><div class="stat-value" :class="{'text-danger': (anomalyData?.risk_summary?.length||0)>0}">{{anomalyData?.risk_summary?.length||0}}</div><div class="stat-label">风险预警</div></div>
+                        </div>
+                        <div class="section-card" style="margin-top:16px">
+                            <el-tabs v-model="activeAnalysisTab" @tab-change="onAnalysisTabChange">
+                                <el-tab-pane label="交易概览" name="overview">
+                                    <!-- 月度资金流入/流出趋势 -->
+                                    <div style="margin-bottom:24px">
+                                        <h4 style="margin:0 0 12px 0;font-size:16px;color:#303133">月度资金流入/流出趋势</h4>
+                                        <div ref="chartMonthly" style="height:400px"></div>
+                                    </div>
+
+                                    <!-- 两列布局 -->
+                                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:24px">
+                                        <!-- 交易时段分布 -->
+                                        <div>
+                                            <h4 style="margin:0 0 12px 0;font-size:16px;color:#303133">交易时段分布</h4>
+                                            <div ref="chartHour" style="height:350px"></div>
+                                        </div>
+                                        <!-- 对手方统计（简版） -->
+                                        <div>
+                                            <h4 style="margin:0 0 12px 0;font-size:16px;color:#303133">主要对手方</h4>
+                                            <div style="height:350px;overflow-y:auto">
+                                                <div v-for="(cp,i) in counterparts.slice(0,8)" :key="i"
+                                                    style="padding:8px 12px;margin-bottom:8px;background:#f5f7fa;border-radius:4px;display:flex;justify-content:space-between;align-items:center">
+                                                    <div style="flex:1;font-weight:500">{{cp.counterpart_name}}</div>
+                                                    <div style="display:flex;gap:12px;font-size:12px">
+                                                        <span style="color:#67c23a">入: {{(cp.total_in_yuan||0).toLocaleString()}}元</span>
+                                                        <span style="color:#f56c6c">出: {{(cp.total_out_yuan||0).toLocaleString()}}元</span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <!-- 资金往来 TOP 10 对手方（柱状图） -->
+                                    <div>
+                                        <h4 style="margin:0 0 12px 0;font-size:16px;color:#303133">资金往来 TOP 10 对手方</h4>
+                                        <div ref="chartCounterpart" style="height:400px"></div>
+                                    </div>
+                                </el-tab-pane>
+
+                                <el-tab-pane label="异常检测" name="anomaly">
+                                    <h4 style="margin:0 0 16px 0;font-size:16px;color:#303133">异常检测结果</h4>
+                                    <div v-if="anomalyData?.risk_summary?.length" class="alert-list">
+                                        <el-alert v-for="(item,i) in anomalyData.risk_summary" :key="i"
+                                            :title="'['+item.type+'] '+item.description"
+                                            :type="item.risk_level==='HIGH'?'error':'warning'"
+                                            show-icon :closable="false" style="margin-bottom:10px"/>
+                                    </div>
+                                    <div v-else class="empty-hint">未检测到明显异常</div>
+                                </el-tab-pane>
+                            </el-tabs>
+                        </div>
+                    </div>
+                    <div v-else class="empty-hint" style="margin-top:40px">请选择分析对象并点击「执行分析」</div>
+                    </div>
+                </div>
+
+                <!-- ========== 关系图谱 ========== -->
+                <div v-if="currentPage==='graph'" class="page">
+                    <div class="page-header">
+                        <h2>关系图谱分析</h2>
+                        <div style="display:flex;gap:10px;align-items:center">
+                            <el-select v-model="selectedUser" placeholder="选择分析对象" style="width:250px">
+                                <el-option v-for="p in persons" :key="p.user_id" :label="p.name+'('+p.user_id+')'" :value="p.user_id"/>
+                            </el-select>
+                            <el-button type="primary" @click="loadGraph" :loading="graphLoading" :disabled="!selectedUser">
+                                <span v-if="!graphLoading">▶ 执行查询</span>
+                                <span v-else>加载中...</span>
+                            </el-button>
+                        </div>
+                    </div>
+                    <div v-loading="graphLoading" element-loading-text="正在构建关系图谱，请稍候..." style="min-height:100px">
+                    <div v-if="graphData">
+                        <div class="stats-row">
+                            <div class="stat-box"><div class="stat-value">{{graphData.metrics?.degree||0}}</div><div class="stat-label">总度数</div></div>
+                            <div class="stat-box"><div class="stat-value">{{graphData.metrics?.in_degree||0}}</div><div class="stat-label">入度(收款来源)</div></div>
+                            <div class="stat-box"><div class="stat-value">{{graphData.metrics?.out_degree||0}}</div><div class="stat-label">出度(付款去向)</div></div>
+                            <div class="stat-box"><div class="stat-value">{{graphData.metrics?.person_contacts||0}}</div><div class="stat-label">自然人联系人</div></div>
+                        </div>
+                        <div class="section-card" style="margin-top:16px">
+                            <div class="section-title">资金流向图谱
+                                <span class="section-hint">红色=分析目标, 蓝色=自然人, 灰色=企业。悬停查看详情。</span>
+                            </div>
+                            <iframe v-if="graphIframeSrc" :src="graphIframeSrc" class="graph-iframe" sandbox="allow-scripts"></iframe>
+                            <div v-else class="empty-hint">无图谱数据</div>
+                        </div>
+                        <div class="two-col" style="margin-top:16px">
+                            <div class="section-card">
+                                <div class="section-title">疑似过桥账户(白手套)</div>
+                                <div v-if="graphData.bridges?.length">
+                                    <div v-for="(b,i) in graphData.bridges" :key="i" class="bridge-item">
+                                        <el-tag :type="b.suspicion>0.5?'danger':'warning'" size="small">{{(b.suspicion*100).toFixed(0)}}%</el-tag>
+                                        <strong>{{b.bridge_name}}</strong> ({{b.direction}})
+                                        <span class="text-muted"> — 流入{{b.flow_in.toLocaleString()}}元 / 流出{{b.flow_out.toLocaleString()}}元</span>
+                                    </div>
+                                </div>
+                                <div v-else class="empty-hint">未发现</div>
+                            </div>
+                            <div class="section-card">
+                                <div class="section-title">资金回流环路</div>
+                                <div v-if="graphData.cycles?.length">
+                                    <div v-for="(c,i) in graphData.cycles" :key="i" style="margin-bottom:10px">
+                                        <el-tag type="danger" size="small">环路{{i+1}}</el-tag>
+                                        {{c.path.join(' -> ')}} -> {{c.path[0]}}
+                                        <span class="text-muted">(瓶颈: {{c.min_flow_yuan.toLocaleString()}}元)</span>
+                                    </div>
+                                </div>
+                                <div v-else class="empty-hint">未发现</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div v-else class="empty-hint" style="margin-top:40px">请选择分析对象并点击「执行查询」</div>
+                    </div>
+                </div>
+
+                <!-- ========== 人员画像 ========== -->
+                <div v-if="currentPage==='profile'" class="page">
+                    <div class="page-header">
+                        <h2>人员画像报告</h2>
+                        <div style="display:flex;gap:12px">
+                            <el-select v-model="selectedUser" placeholder="选择分析对象" style="width:250px">
+                                <el-option v-for="p in persons" :key="p.user_id" :label="p.name+'('+p.user_id+')'" :value="p.user_id"/>
+                            </el-select>
+                            <el-button type="primary" @click="loadProfile" :loading="profileLoading">生成画像报告</el-button>
+                        </div>
+                    </div>
+                    <div v-if="profileData" style="margin-top:16px">
+                        <div class="stats-row">
+                            <div :class="['stat-box','risk-box','risk-'+profileData.overall_risk?.toLowerCase()]">
+                                <div class="stat-value">{{profileData.overall_risk==='HIGH'?'高风险':profileData.overall_risk==='MEDIUM'?'中风险':'低风险'}}</div>
+                                <div class="stat-label">综合风险评级</div>
+                            </div>
+                            <div class="stat-box"><div class="stat-value">{{profileData.basic_stats?.total_tx||0}}</div><div class="stat-label">交易笔数</div></div>
+                            <div class="stat-box"><div class="stat-value">{{(profileData.basic_stats?.total_income_yuan||0).toLocaleString()}}</div><div class="stat-label">总入账(元)</div></div>
+                            <div class="stat-box"><div class="stat-value">{{(profileData.basic_stats?.total_expense_yuan||0).toLocaleString()}}</div><div class="stat-label">总出账(元)</div></div>
+                        </div>
+                        <el-collapse style="margin-top:16px" v-model="profileExpanded">
+                            <el-collapse-item title="基本信息" name="info">
+                                <el-descriptions :column="2" border>
+                                    <el-descriptions-item label="姓名">{{profileData.person?.name}}</el-descriptions-item>
+                                    <el-descriptions-item label="身份证号">{{profileData.person?.id_card}}</el-descriptions-item>
+                                    <el-descriptions-item label="账号">{{profileData.person?.user_id}}</el-descriptions-item>
+                                    <el-descriptions-item label="手机">{{profileData.person?.phone}}</el-descriptions-item>
+                                    <el-descriptions-item label="注册时间" :span="2">{{profileData.person?.reg_time}}</el-descriptions-item>
+                                    <el-descriptions-item label="银行卡" :span="2">
+                                        <div v-for="c in profileData.cards" :key="c.card_no" style="margin-bottom:4px">
+                                            <el-tag size="small" :type="c.status?.includes('正常')?'success':'info'">{{c.status}}</el-tag>
+                                            {{c.bank_name}} {{c.card_no}}
+                                        </div>
+                                    </el-descriptions-item>
+                                </el-descriptions>
+                            </el-collapse-item>
+                            <el-collapse-item title="风险预警" name="risk">
+                                <div v-if="profileData.risk_items?.length" class="alert-list">
+                                    <el-alert v-for="(item,i) in profileData.risk_items" :key="i"
+                                        :title="'['+item.type+'] '+item.description"
+                                        :type="item.risk_level==='HIGH'?'error':'warning'"
+                                        show-icon :closable="false" style="margin-bottom:10px"/>
+                                </div>
+                                <div v-else class="empty-hint">未发现异常</div>
+                            </el-collapse-item>
+                            <el-collapse-item title="关键关系人" name="contacts">
+                                <el-table :data="profileData.top_contacts" stripe border size="small">
+                                    <el-table-column prop="name" label="姓名/名称" min-width="150"/>
+                                    <el-table-column label="入账(元)" width="120"><template #default="{row}">{{(row.in||0).toLocaleString()}}</template></el-table-column>
+                                    <el-table-column label="出账(元)" width="120"><template #default="{row}">{{(row.out||0).toLocaleString()}}</template></el-table-column>
+                                    <el-table-column prop="count" label="笔数" width="80"/>
+                                </el-table>
+                            </el-collapse-item>
+                        </el-collapse>
+                        <div class="section-card" style="margin-top:20px">
+                            <div class="section-title">完整文本报告</div>
+                            <pre class="report-text">{{profileData.report_text}}</pre>
+                            <el-button @click="downloadReport" style="margin-top:12px">下载报告 (.txt)</el-button>
+                        </div>
+                    </div>
+                    <div v-else class="empty-hint" style="margin-top:40px">请选择分析对象并点击"生成画像报告"</div>
+                </div>
+
+                <!-- ========== AI 智能侦查 ========== -->
+                <div v-if="currentPage==='agent'" class="page agent-page">
+                    <div class="page-header"><h2>AI 智能侦查助手</h2></div>
+                    <div class="agent-layout">
+                        <div class="agent-main">
+                            <div class="chat-messages" ref="chatBox">
+                                <div v-if="!chatMessages.length" class="chat-welcome">
+                                    <h3>欢迎使用 AI 智能侦查助手</h3>
+                                    <p>基于大语言模型的对话式分析, 支持自然语言查询, 自动调用数据分析工具。</p>
+                                    <div class="sample-grid">
+                                        <div v-for="q in sampleQuestions" :key="q" class="sample-q" @click="chatInput=q;sendChat()">{{q}}</div>
+                                    </div>
+                                </div>
+                                <div v-for="(msg,i) in chatMessages" :key="i" :class="'chat-msg chat-'+msg.role">
+                                    <div class="chat-avatar">{{msg.role==='user'?'Q':'AI'}}</div>
+                                    <div class="chat-bubble" v-html="msg.role==='assistant'?renderMd(msg.content):msg.content"></div>
+                                </div>
+                                <div v-if="chatLoading" class="chat-msg chat-assistant">
+                                    <div class="chat-avatar">AI</div>
+                                    <div class="chat-bubble loading-bubble">
+                                        <span class="typing-dots"><span>.</span><span>.</span><span>.</span></span> 正在分析中
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="chat-input">
+                                <el-input v-model="chatInput" placeholder="请输入您的侦查分析需求..." @keyup.enter="sendChat"
+                                    :disabled="chatLoading" size="large" clearable/>
+                                <el-button type="primary" @click="sendChat" :loading="chatLoading" size="large">发送</el-button>
+                            </div>
+                        </div>
+                        <div class="agent-sidebar">
+                            <div class="section-card">
+                                <div class="section-title">模型配置</div>
+                                <table class="config-table">
+                                    <tr>
+                                        <td class="config-label">厂商</td>
+                                        <td>
+                                            <select v-model="agentConfig.provider" @change="onProviderChange" class="config-select">
+                                                <option v-for="(p,id) in providers" :key="id" :value="id">{{p.name}}</option>
+                                            </select>
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <td class="config-label">模型</td>
+                                        <td>
+                                            <select v-if="currentProviderModels.length" v-model="agentConfig.model" class="config-select">
+                                                <option v-for="m in currentProviderModels" :key="m" :value="m">{{m}}</option>
+                                            </select>
+                                            <input v-else v-model="agentConfig.model" class="config-input" placeholder="模型名称"/>
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <td class="config-label">密钥</td>
+                                        <td>
+                                            <div style="display:flex;gap:4px">
+                                                <input v-model="agentConfig.apiKey" :type="showApiKey?'text':'password'" class="config-input" placeholder="输入 API Key" style="flex:1"/>
+                                                <button type="button" class="config-toggle" @click="showApiKey=!showApiKey">{{showApiKey?'隐藏':'显示'}}</button>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                    <tr v-if="agentConfig.provider==='custom'">
+                                        <td class="config-label">地址</td>
+                                        <td><input v-model="agentConfig.baseUrl" class="config-input" placeholder="https://..."/></td>
+                                    </tr>
+                                </table>
+                                <button class="config-btn" @click="chatMessages=[];chatHistory=[]">清空对话</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <script src="assets/app.js"></script>
+</body>
+</html>

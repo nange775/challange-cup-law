@@ -1,0 +1,27 @@
+[server]
+# 启用文件监视器缓存以提升性能
+enableCORS = false
+enableXsrfProtection = false
+maxUploadSize = 200
+
+[client]
+# 显示工具栏
+showErrorDetails = true
+toolbarMode = "minimal"
+
+[runner]
+# 启用魔法命令
+magicEnabled = true
+# 快速重新运行
+fastReruns = true
+
+[browser]
+# 在启动时自动打开浏览器
+gatherUsageStats = false
+
+[theme]
+# 主题设置
+primaryColor = "#3498db"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f0f2f6"
+textColor = "#262730"

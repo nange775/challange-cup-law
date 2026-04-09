@@ -1,0 +1,21 @@
+# Streamlit前端依赖
+streamlit>=1.28.0
+plotly>=5.18.0
+
+# FastAPI后端依赖
+fastapi>=0.100.0
+uvicorn>=0.20.0
+python-multipart>=0.0.6
+
+# 数据处理
+pandas>=2.0.0
+openpyxl>=3.1.0
+xlrd>=2.0.0
+
+# 图谱分析
+networkx>=3.0
+pyvis>=0.3.2
+
+# AI模型
+anthropic>=0.40.0
+openai>=1.0.0
