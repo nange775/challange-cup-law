@@ -196,15 +196,15 @@ def get_top_counterparts(G: nx.DiGraph, target: str, top_n: int = 10) -> list:
 
 
 def generate_pyvis_html(G: nx.DiGraph, target: str, output_path: str = None) -> str:
-    """生成 PyVis 交互式图谱 HTML"""
-    from pyvis.network import Network
-
-    net = Network(height="600px", width="100%", directed=True, bgcolor="#ffffff")
-    net.barnes_hut(gravity=-3000, central_gravity=0.3, spring_length=200)
+    """生成交互式图谱 HTML（使用国内CDN）"""
+    import json
 
     # 只保留与target有直接关系的节点(1跳邻居), 以及邻居间的关系
     neighbors = set(list(G.successors(target)) + list(G.predecessors(target)))
     subgraph_nodes = {target} | neighbors
+
+    nodes = []
+    edges = []
 
     for node in subgraph_nodes:
         if node not in G:
@@ -228,23 +228,78 @@ def generate_pyvis_html(G: nx.DiGraph, target: str, output_path: str = None) -> 
             f"出账: {node_data.get('total_out', 0):.0f}元\n"
             f"交易笔数: {node_data.get('tx_count', 0)}"
         )
-        net.add_node(node, label=label, title=title, color=color, size=size)
+        nodes.append({
+            "id": str(node),
+            "label": label,
+            "title": title,
+            "color": color,
+            "size": size,
+        })
 
     for src, dst in G.edges():
         if src in subgraph_nodes and dst in subgraph_nodes:
             edge_data = G[src][dst]
             weight = edge_data["weight"]
             count = edge_data["count"]
-            # 边粗细反映金额
             width = max(1, min(10, weight / 5000))
-            # 金额大的用红色
             color = "#e74c3c" if weight >= 10000 else "#7f8c8d"
             title = f"金额: {weight:.0f}元, 笔数: {count}"
-            net.add_edge(src, dst, width=width, color=color, title=title,
-                        arrows="to", label=f"{weight:.0f}")
+            edges.append({
+                "from": str(src),
+                "to": str(dst),
+                "width": width,
+                "color": color,
+                "title": title,
+                "label": f"{weight:.0f}",
+                "arrows": "to"
+            })
+
+    # 生成自定义HTML（使用国内CDN）
+    html_template = f"""
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>关系图谱</title>
+    <script src="https://cdn.bootcdn.net/ajax/libs/vis-network/9.1.2/standalone/umd/vis-network.min.js"></script>
+    <style>
+        body {{ margin: 0; padding: 0; font-family: Arial, sans-serif; }}
+        #network {{ width: 100%; height: 600px; border: 1px solid #ddd; }}
+    </style>
+</head>
+<body>
+    <div id="network"></div>
+    <script>
+        var nodes = new vis.DataSet({json.dumps(nodes, ensure_ascii=False)});
+        var edges = new vis.DataSet({json.dumps(edges, ensure_ascii=False)});
+        var container = document.getElementById('network');
+        var data = {{ nodes: nodes, edges: edges }};
+        var options = {{
+            physics: {{
+                barnesHut: {{
+                    gravitationalConstant: -3000,
+                    centralGravity: 0.3,
+                    springLength: 200
+                }}
+            }},
+            edges: {{
+                arrows: {{ to: {{ enabled: true }} }},
+                smooth: {{ type: 'continuous' }}
+            }},
+            interaction: {{
+                hover: true,
+                tooltipDelay: 100
+            }}
+        }};
+        var network = new vis.Network(container, data, options);
+    </script>
+</body>
+</html>
+"""
 
     if output_path:
-        net.save_graph(output_path)
+        with open(output_path, 'w', encoding='utf-8') as f:
+            f.write(html_template)
         return output_path
     else:
-        return net.generate_html()
+        return html_template

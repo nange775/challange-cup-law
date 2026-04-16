@@ -1,10 +1,34 @@
 """项目配置"""
 import os
+import sys
 from pathlib import Path
 
+
+def get_resource_path(relative_path: str) -> Path:
+    """获取资源文件路径（兼容打包后和开发环境）"""
+    if getattr(sys, 'frozen', False):
+        # PyInstaller 打包后，资源在 _MEIPASS 临时目录
+        base_path = Path(sys._MEIPASS)
+    else:
+        # 开发环境
+        base_path = Path(__file__).parent
+    return base_path / relative_path
+
+
+def get_data_path(relative_path: str) -> Path:
+    """获取数据文件路径（用户可写目录）"""
+    if getattr(sys, 'frozen', False):
+        # 打包后：使用可执行文件所在目录
+        base_path = Path(sys.executable).parent
+    else:
+        # 开发环境
+        base_path = Path(__file__).parent
+    return base_path / relative_path
+
+
 # 路径配置
-PROJECT_ROOT = Path(__file__).parent
-DATA_DIR = PROJECT_ROOT / "data"
+PROJECT_ROOT = Path(__file__).parent if not getattr(sys, 'frozen', False) else Path(sys.executable).parent
+DATA_DIR = get_data_path("data")
 DB_PATH = DATA_DIR / "investigation.db"
 
 # 分析参数

@@ -1,0 +1,561 @@
+"""证据导入模块 - 多格式数据导入"""
+import json
+import uuid
+from pathlib import Path
+from datetime import datetime
+from typing import Dict, List, Tuple
+import pandas as pd
+import sys
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from src.database import (
+    create_evidence, link_person_evidence, get_conn,
+    insert_statement, insert_chat_records, insert_document,
+    insert_location_records, insert_call_records, insert_system_logs
+)
+from config import DATA_DIR
+
+
+# ==================== 文件解析器 ====================
+
+def parse_pdf(file_path: str) -> str:
+    """解析PDF文件"""
+    try:
+        import pdfplumber
+        with pdfplumber.open(file_path) as pdf:
+            text = "\n".join([page.extract_text() or "" for page in pdf.pages])
+        return text
+    except Exception as e:
+        return f"PDF解析失败: {str(e)}"
+
+
+def parse_word(file_path: str) -> str:
+    """解析Word文件"""
+    try:
+        from docx import Document
+        doc = Document(file_path)
+        text = "\n".join([para.text for para in doc.paragraphs])
+        return text
+    except Exception as e:
+        return f"Word解析失败: {str(e)}"
+
+
+def parse_text(file_path: str) -> str:
+    """解析纯文本文件"""
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            return f.read()
+    except:
+        try:
+            with open(file_path, 'r', encoding='gbk') as f:
+                return f.read()
+        except Exception as e:
+            return f"文本解析失败: {str(e)}"
+
+
+def parse_excel(file_path: str) -> pd.DataFrame:
+    """解析Excel文件"""
+    try:
+        df = pd.read_excel(file_path)
+        return df
+    except Exception as e:
+        raise ValueError(f"Excel解析失败: {str(e)}")
+
+
+def extract_file_content(file_path: str) -> Tuple[str, pd.DataFrame]:
+    """根据文件类型提取内容"""
+    suffix = Path(file_path).suffix.lower()
+
+    if suffix == '.pdf':
+        return parse_pdf(file_path), None
+    elif suffix in ['.doc', '.docx']:
+        return parse_word(file_path), None
+    elif suffix == '.txt':
+        return parse_text(file_path), None
+    elif suffix in ['.xls', '.xlsx']:
+        return None, parse_excel(file_path)
+    else:
+        raise ValueError(f"不支持的文件格式: {suffix}")
+
+
+# ==================== AI 识别接口（占位） ====================
+
+def ai_classify_evidence(content: str = None, df: pd.DataFrame = None) -> dict:
+    """
+    AI识别证据类型和内容
+
+    TODO: 集成实际的AI模型
+
+    返回格式:
+    {
+        'evidence_type': '供述' | '证言' | '流水' | '聊天' | '文书' | '鉴定' | '笔录' | '测谎' | '轨迹' | '通话' | '日志' | '其他',
+        'title': str,
+        'event_time': str,
+        'extract_time': str,
+        'summary': str,
+        'related_persons': [{'name': str, 'role': str}],
+        'structured_data': dict | list  # 对于表格数据
+    }
+    """
+    # ========== 占位实现：简单规则判断 ==========
+
+    result = {
+        'evidence_type': '其他',
+        'title': '未命名证据',
+        'event_time': None,
+        'extract_time': None,
+        'summary': '',
+        'related_persons': [],
+        'structured_data': None
+    }
+
+    # 如果是表格数据
+    if df is not None:
+        # 简单判断表格类型
+        columns_str = '|'.join([str(c).lower() for c in df.columns])
+
+        if any(k in columns_str for k in ['金额', '交易', '余额', 'amount', '收支']):
+            result['evidence_type'] = '流水'
+            result['title'] = '资金流水记录'
+        elif any(k in columns_str for k in ['主叫', '被叫', '通话', 'caller', 'callee']):
+            result['evidence_type'] = '通话'
+            result['title'] = '通话记录'
+        elif any(k in columns_str for k in ['经度', '纬度', 'lat', 'lng', '位置']):
+            result['evidence_type'] = '轨迹'
+            result['title'] = '行动轨迹'
+        elif any(k in columns_str for k in ['时间', '操作', 'log', 'action', 'ip']):
+            result['evidence_type'] = '日志'
+            result['title'] = '系统操作日志'
+
+        result['summary'] = f"包含 {len(df)} 条记录"
+        result['structured_data'] = df.to_dict('records')
+
+    # 如果是文本数据
+    elif content:
+        content_lower = content.lower()
+
+        if '供述' in content or '承认' in content or '交代' in content:
+            result['evidence_type'] = '供述'
+            result['title'] = '犯罪嫌疑人供述'
+        elif '证实' in content or '看到' in content or '听到' in content:
+            result['evidence_type'] = '证言'
+            result['title'] = '证人证言'
+        elif '鉴定' in content or '检验' in content:
+            result['evidence_type'] = '鉴定'
+            result['title'] = '鉴定意见'
+        elif '判决' in content or '裁定' in content:
+            result['evidence_type'] = '文书'
+            result['title'] = '司法文书'
+        elif '笔录' in content:
+            result['evidence_type'] = '笔录'
+            result['title'] = '侦查笔录'
+        elif '测谎' in content:
+            result['evidence_type'] = '测谎'
+            result['title'] = '测谎结果'
+
+        result['summary'] = content[:200] + '...' if len(content) > 200 else content
+
+    return result
+
+
+def ai_extract_persons(content: str) -> List[Dict]:
+    """
+    从文本中提取人名
+
+    TODO: 集成NER模型
+
+    返回格式: [{'name': '张三', 'role': '嫌疑人'}, ...]
+    """
+    # ========== 占位实现：返回空列表 ==========
+    return []
+
+
+# ==================== 证据导入主流程 ====================
+
+def import_evidence(
+    file_path: str,
+    case_id: str,
+    manual_info: dict = None
+) -> dict:
+    """
+    导入证据文件
+
+    Args:
+        file_path: 文件路径
+        case_id: 案件ID
+        manual_info: 用户手动提供的信息（可选）
+            {
+                'evidence_type': str,
+                'title': str,
+                'related_persons': [person_id, ...],
+                'event_time': str,
+                'extract_time': str
+            }
+
+    Returns:
+        {
+            'success': bool,
+            'evidence_id': str,
+            'evidence_type': str,
+            'message': str
+        }
+    """
+    try:
+        # 1. 提取文件内容
+        text_content, df_content = extract_file_content(file_path)
+
+        # 2. AI识别证据类型和内容（或使用手动信息）
+        if manual_info and manual_info.get('evidence_type'):
+            ai_result = manual_info
+        else:
+            ai_result = ai_classify_evidence(content=text_content, df=df_content)
+
+        # 3. 生成证据ID
+        evidence_id = str(uuid.uuid4())
+
+        # 4. 保存原始文件
+        file_name = Path(file_path).name
+        save_dir = DATA_DIR / "evidence_files" / case_id
+        save_dir.mkdir(parents=True, exist_ok=True)
+        save_path = save_dir / f"{evidence_id}_{file_name}"
+
+        # 复制文件到证据目录
+        import shutil
+        shutil.copy2(file_path, save_path)
+
+        # 5. 创建证据元数据
+        evidence_data = {
+            'evidence_id': evidence_id,
+            'case_id': case_id,
+            'evidence_type': ai_result.get('evidence_type', '其他'),
+            'title': ai_result.get('title', file_name),
+            'file_path': str(save_path),
+            'event_time': ai_result.get('event_time'),
+            'extract_time': ai_result.get('extract_time'),
+            'ai_summary': ai_result.get('summary', ''),
+            'status': '已分类' if ai_result.get('evidence_type') != '其他' else '待审核'
+        }
+
+        create_evidence(evidence_data)
+
+        # 6. 根据证据类型存入具体表
+        evidence_type = evidence_data['evidence_type']
+
+        if evidence_type in ['供述', '辩解', '证言']:
+            _import_statement(evidence_id, text_content, ai_result)
+
+        elif evidence_type == '流水':
+            _import_financial_records(evidence_id, case_id, df_content)
+
+        elif evidence_type == '聊天':
+            _import_chat_records(evidence_id, df_content or text_content)
+
+        elif evidence_type == '通话':
+            _import_call_records(evidence_id, df_content)
+
+        elif evidence_type == '轨迹':
+            _import_location_records(evidence_id, df_content)
+
+        elif evidence_type == '日志':
+            _import_system_logs(evidence_id, df_content)
+
+        elif evidence_type in ['文书', '鉴定', '笔录', '测谎']:
+            _import_document(evidence_id, text_content, evidence_type)
+
+        # 7. 关联人员
+        related_persons = manual_info.get('related_persons', []) if manual_info else []
+        if not related_persons and text_content:
+            # AI提取人名并匹配
+            extracted_persons = ai_extract_persons(text_content)
+            related_persons = _match_persons_to_db(extracted_persons, case_id)
+
+        for person_id in related_persons:
+            link_person_evidence(person_id, evidence_id, '当事人')
+
+        return {
+            'success': True,
+            'evidence_id': evidence_id,
+            'evidence_type': evidence_type,
+            'message': f'成功导入{evidence_type}证据'
+        }
+
+    except Exception as e:
+        return {
+            'success': False,
+            'message': f'导入失败: {str(e)}'
+        }
+
+
+# ==================== 各类型证据的导入逻辑 ====================
+
+def _import_statement(evidence_id: str, content: str, ai_result: dict):
+    """导入供述/证言"""
+    statement_id = str(uuid.uuid4())
+    insert_statement({
+        'statement_id': statement_id,
+        'evidence_id': evidence_id,
+        'person_id': '',  # 稍后通过关联表确定
+        'statement_type': ai_result.get('evidence_type'),
+        'content': content,
+        'key_persons': json.dumps(ai_result.get('key_persons', []), ensure_ascii=False),
+        'key_amounts': json.dumps(ai_result.get('key_amounts', []), ensure_ascii=False),
+        'key_events': json.dumps(ai_result.get('key_events', []), ensure_ascii=False)
+    })
+
+
+def _import_financial_records(evidence_id: str, case_id: str, df: pd.DataFrame):
+    """导入资金流水到transactions表"""
+    if df is None or df.empty:
+        return
+
+    conn = get_conn()
+
+    # 字段映射（根据实际列名灵活匹配）
+    column_mapping = _smart_column_mapping(df.columns, {
+        'user_id': ['账号', '用户id', 'userid', 'user_id', '用户账号'],
+        'user_name': ['姓名', '用户名', 'name', '账户名'],
+        'trade_time': ['交易时间', '时间', 'time', 'date', '日期'],
+        'amount': ['金额', '交易金额', 'amount', '数额'],
+        'counterpart_name': ['对方', '交易对方', '对手方', 'counterpart'],
+        'direction': ['收支', '方向', 'direction', '类型'],
+        'purpose': ['用途', '备注', 'purpose', 'remark'],
+    })
+
+    # 自动创建不存在的人员
+    user_ids_in_data = set()
+    for _, row in df.iterrows():
+        user_id = str(row.get(column_mapping.get('user_id', 'user_id'), ''))
+        user_name = str(row.get(column_mapping.get('user_name', 'user_name'), ''))
+        if user_id and user_id not in user_ids_in_data:
+            user_ids_in_data.add(user_id)
+            # 检查是否存在
+            exists = conn.execute("SELECT 1 FROM persons WHERE user_id = ?", [user_id]).fetchone()
+            if not exists:
+                # 自动创建
+                conn.execute("""
+                    INSERT INTO persons (user_id, case_id, name, role)
+                    VALUES (?, ?, ?, ?)
+                """, [user_id, case_id, user_name, '涉案人'])
+
+    conn.commit()
+
+    # 插入交易记录
+    for _, row in df.iterrows():
+        amount_val = row.get(column_mapping.get('amount', 'amount'), 0)
+        # 转换为分
+        if isinstance(amount_val, str):
+            amount_val = float(amount_val.replace(',', '').replace('¥', ''))
+        amount_fen = int(float(amount_val) * 100)
+
+        direction = row.get(column_mapping.get('direction', 'direction'), '')
+        if '入' in str(direction) or '收' in str(direction):
+            direction = '入'
+        elif '出' in str(direction) or '支' in str(direction):
+            direction = '出'
+
+        user_id = str(row.get(column_mapping.get('user_id', 'user_id'), ''))
+
+        conn.execute("""
+            INSERT INTO transactions
+            (case_id, evidence_id, user_id, user_name, trade_time, amount, direction,
+             counterpart_name, purpose, source_type)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, [
+            case_id,
+            evidence_id,
+            user_id,
+            str(row.get(column_mapping.get('user_name', 'user_name'), '')),
+            str(row.get(column_mapping.get('trade_time', 'trade_time'), '')),
+            amount_fen,
+            direction,
+            str(row.get(column_mapping.get('counterpart_name', 'counterpart_name'), '')),
+            str(row.get(column_mapping.get('purpose', 'purpose'), '')),
+            '其他银行'  # 区别于原有的财付通数据
+        ])
+
+    conn.commit()
+    conn.close()
+
+
+def _import_chat_records(evidence_id: str, data):
+    """导入聊天记录"""
+    chat_list = []
+
+    if isinstance(data, pd.DataFrame):
+        # Excel格式的聊天记录
+        for idx, row in data.iterrows():
+            chat_list.append({
+                'message_id': f"{evidence_id}_{idx}",
+                'evidence_id': evidence_id,
+                'sender_id': row.get('发送人', ''),
+                'receiver_id': row.get('接收人', ''),
+                'send_time': str(row.get('时间', '')),
+                'content': row.get('内容', ''),
+                'message_type': row.get('类型', '文本')
+            })
+    else:
+        # 文本格式的聊天记录（简单解析）
+        # TODO: 更复杂的文本聊天记录解析
+        pass
+
+    if chat_list:
+        insert_chat_records(chat_list)
+
+
+def _import_call_records(evidence_id: str, df: pd.DataFrame):
+    """导入通话记录"""
+    if df is None or df.empty:
+        return
+
+    column_mapping = _smart_column_mapping(df.columns, {
+        'caller_id': ['主叫', 'caller', '拨打方'],
+        'callee_id': ['被叫', 'callee', '接听方'],
+        'call_time': ['时间', 'time', '通话时间'],
+        'duration': ['时长', 'duration', '通话时长']
+    })
+
+    call_list = []
+    for idx, row in df.iterrows():
+        duration = row.get(column_mapping.get('duration', 'duration'), 0)
+        if isinstance(duration, str):
+            # 可能是 "1分30秒" 格式
+            duration = _parse_duration(duration)
+
+        call_list.append({
+            'record_id': f"{evidence_id}_{idx}",
+            'evidence_id': evidence_id,
+            'caller_id': str(row.get(column_mapping.get('caller_id', 'caller_id'), '')),
+            'callee_id': str(row.get(column_mapping.get('callee_id', 'callee_id'), '')),
+            'call_time': str(row.get(column_mapping.get('call_time', 'call_time'), '')),
+            'duration': int(duration)
+        })
+
+    insert_call_records(call_list)
+
+
+def _import_location_records(evidence_id: str, df: pd.DataFrame):
+    """导入轨迹数据"""
+    if df is None or df.empty:
+        return
+
+    column_mapping = _smart_column_mapping(df.columns, {
+        'person_id': ['人员', 'person', '用户'],
+        'record_time': ['时间', 'time'],
+        'latitude': ['纬度', 'lat', 'latitude'],
+        'longitude': ['经度', 'lng', 'lon', 'longitude'],
+        'location_name': ['位置', 'location', '地点']
+    })
+
+    location_list = []
+    for idx, row in df.iterrows():
+        location_list.append({
+            'record_id': f"{evidence_id}_{idx}",
+            'evidence_id': evidence_id,
+            'person_id': str(row.get(column_mapping.get('person_id', 'person_id'), '')),
+            'record_time': str(row.get(column_mapping.get('record_time', 'record_time'), '')),
+            'latitude': float(row.get(column_mapping.get('latitude', 'latitude'), 0)),
+            'longitude': float(row.get(column_mapping.get('longitude', 'longitude'), 0)),
+            'location_name': str(row.get(column_mapping.get('location_name', 'location_name'), ''))
+        })
+
+    insert_location_records(location_list)
+
+
+def _import_system_logs(evidence_id: str, df: pd.DataFrame):
+    """导入系统日志"""
+    if df is None or df.empty:
+        return
+
+    column_mapping = _smart_column_mapping(df.columns, {
+        'person_id': ['用户', 'user', '操作人'],
+        'log_time': ['时间', 'time'],
+        'action': ['操作', 'action', '行为'],
+        'ip_address': ['ip', 'ip地址', 'ip_address'],
+        'details': ['详情', 'details', '描述']
+    })
+
+    log_list = []
+    for idx, row in df.iterrows():
+        log_list.append({
+            'log_id': f"{evidence_id}_{idx}",
+            'evidence_id': evidence_id,
+            'person_id': str(row.get(column_mapping.get('person_id', 'person_id'), '')),
+            'log_time': str(row.get(column_mapping.get('log_time', 'log_time'), '')),
+            'action': str(row.get(column_mapping.get('action', 'action'), '')),
+            'ip_address': str(row.get(column_mapping.get('ip_address', 'ip_address'), '')),
+            'details': str(row.get(column_mapping.get('details', 'details'), ''))
+        })
+
+    insert_system_logs(log_list)
+
+
+def _import_document(evidence_id: str, content: str, doc_type: str):
+    """导入文书类证据"""
+    doc_id = str(uuid.uuid4())
+    insert_document({
+        'doc_id': doc_id,
+        'evidence_id': evidence_id,
+        'doc_subtype': doc_type,
+        'content': content,
+        'key_info': '{}'  # TODO: AI提取关键信息
+    })
+
+
+# ==================== 辅助函数 ====================
+
+def _smart_column_mapping(columns: list, target_mapping: dict) -> dict:
+    """智能列名映射"""
+    result = {}
+    columns_lower = [str(c).lower() for c in columns]
+
+    for target_col, possible_names in target_mapping.items():
+        for possible in possible_names:
+            for i, col in enumerate(columns_lower):
+                if possible.lower() in col:
+                    result[target_col] = columns[i]
+                    break
+            if target_col in result:
+                break
+
+    return result
+
+
+def _parse_duration(duration_str: str) -> int:
+    """解析时长字符串为秒数"""
+    try:
+        if '分' in duration_str and '秒' in duration_str:
+            parts = duration_str.replace('分', ':').replace('秒', '').split(':')
+            return int(parts[0]) * 60 + int(parts[1])
+        elif '分' in duration_str:
+            return int(duration_str.replace('分', '')) * 60
+        elif '秒' in duration_str:
+            return int(duration_str.replace('秒', ''))
+        else:
+            return int(duration_str)
+    except:
+        return 0
+
+
+def _match_persons_to_db(extracted_persons: List[Dict], case_id: str) -> List[str]:
+    """将提取的人名匹配到数据库中的person_id"""
+    if not extracted_persons:
+        return []
+
+    conn = get_conn()
+    matched_ids = []
+
+    for person in extracted_persons:
+        name = person.get('name')
+        if not name:
+            continue
+
+        result = conn.execute(
+            "SELECT user_id FROM persons WHERE case_id = ? AND name = ?",
+            [case_id, name]
+        ).fetchone()
+
+        if result:
+            matched_ids.append(result[0])
+
+    conn.close()
+    return matched_ids

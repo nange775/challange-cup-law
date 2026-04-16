@@ -1,0 +1,126 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# 虚拟环境
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# PyCharm
+.idea/
+
+# VS Code
+.vscode/
+
+# 数据库文件
+*.db
+*.sqlite
+*.sqlite3
+project/data/*.db
+project/data/*.db-*
+project/data/investigation*.db
+
+# 证据文件（敏感数据）
+project/data/evidence_files/
+project/data/*.xls
+project/data/*.xlsx
+project/data/*.pdf
+project/data/*.docx
+project/data/*.doc
+
+# 测试数据
+project/data/test_*.xlsx
+project/data/test_*.xls
+
+# 日志文件
+*.log
+logs/
+
+# 临时文件
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# 环境变量（敏感信息）
+.env
+.env.local
+.env.*.local
+
+# API密钥配置
+*_api_key.txt
+secrets/
+
+# 打包文件
+*.zip
+*.tar.gz
+*.rar
+
+# PyInstaller
+*.spec
+project/build/
+project/dist/
+
+# 系统文件
+desktop.ini
+.DS_Store
+
+# 备份文件
+*.bak
+*_backup_*
+
+# 前端node_modules（如果后续添加前端构建）
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Coverage reports
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/

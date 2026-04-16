@@ -3,9 +3,15 @@
 # 打包目标：server.py (FastAPI后端 + 静态前端)
 
 import sys
+import os
 from pathlib import Path
 
 block_cipher = None
+
+# 获取 pyvis 模板文件路径
+import pyvis
+pyvis_path = os.path.dirname(pyvis.__file__)
+pyvis_templates = os.path.join(pyvis_path, 'templates')
 
 # 需要打包进去的数据文件（源路径, 目标路径）
 added_files = [
@@ -15,8 +21,9 @@ added_files = [
     ('src', 'src'),
     # config
     ('config.py', '.'),
-    # 数据目录（空结构）
-    ('data', 'data'),
+    # pyvis 模板文件
+    (pyvis_templates, 'pyvis/templates'),
+    # 注意：data 目录不打包，运行时会在可执行文件旁边自动创建
 ]
 
 a = Analysis(
@@ -88,7 +95,7 @@ a = Analysis(
         'sklearn',
         'tensorflow',
         'torch',
-        'IPython',
+        # 'IPython',  # pyvis 需要 IPython，不能排除
         'jupyter',
         'notebook',
         'pytest',
@@ -105,13 +112,17 @@ pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 exe = EXE(
     pyz,
     a.scripts,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
     [],
-    exclude_binaries=True,
     name='检察侦查画像系统',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
+    upx_exclude=[],
+    runtime_tmpdir=None,
     console=True,      # 保留控制台窗口，方便查看日志
     disable_windowed_traceback=False,
     argv_emulation=False,
@@ -121,13 +132,4 @@ exe = EXE(
     icon=None,
 )
 
-coll = COLLECT(
-    exe,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
-    strip=False,
-    upx=True,
-    upx_exclude=[],
-    name='检察侦查画像系统',
-)
+# 单文件模式，不需要 COLLECT

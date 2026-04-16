@@ -14,13 +14,18 @@ import pandas as pd
 import hashlib
 
 sys.path.insert(0, str(Path(__file__).parent))
-from src.database import init_db, get_db_stats, get_all_persons, get_person_transactions, clear_db, get_counterpart_summary, get_bank_cards
+from src.database import (
+    init_db, get_db_stats, get_all_persons, get_person_transactions, clear_db,
+    get_counterpart_summary, get_bank_cards, get_all_cases, create_case,
+    get_case_info, get_case_evidences, get_person_evidences
+)
 from src.ingest import ingest_tenpay_data, auto_discover_and_ingest
 from src.anomaly import run_all_detections, get_risk_summary
 from src.graph_analysis import build_transaction_graph, get_network_metrics, find_bridge_accounts, find_fund_cycles, get_top_counterparts, generate_pyvis_html
 from src.profiler import generate_profile, generate_report_text
 from src.agent import chat_with_agent, _resolve_user_id
-from config import LLM_PROVIDERS
+from src.evidence_import import import_evidence
+from config import LLM_PROVIDERS, get_resource_path
 
 # 初始化
 init_db()
@@ -137,6 +142,92 @@ def api_clear():
     # 清除所有缓存
     clear_cache()
     return {"message": "已清空"}
+
+
+# ==================== 案件管理 ====================
+
+@app.post("/api/cases")
+def api_create_case(case_id: str = Query(...), case_name: str = Query(...)):
+    """创建新案件"""
+    result = create_case(case_id, case_name)
+    clear_cache()
+    return result
+
+
+@app.get("/api/cases")
+def api_list_cases():
+    """获取所有案件列表"""
+    df = get_all_cases()
+    return _df_to_records(df)
+
+
+@app.get("/api/cases/{case_id}")
+def api_get_case(case_id: str):
+    """获取案件详情"""
+    case_info = get_case_info(case_id)
+    if not case_info:
+        raise HTTPException(status_code=404, detail="案件不存在")
+    return case_info
+
+
+# ==================== 证据管理 ====================
+
+@app.post("/api/evidence/upload")
+async def api_upload_evidence(
+    file: UploadFile = File(...),
+    case_id: str = Query(...),
+    evidence_type: Optional[str] = None,
+    title: Optional[str] = None,
+    related_persons: Optional[str] = None,  # JSON字符串
+    event_time: Optional[str] = None,
+    extract_time: Optional[str] = None
+):
+    """上传证据文件（全自动识别）"""
+    with tempfile.NamedTemporaryFile(delete=False, suffix=Path(file.filename).suffix) as tmp:
+        tmp.write(await file.read())
+        tmp_path = tmp.name
+
+    try:
+        # 手动信息（如果用户提供）
+        manual_info = {}
+        if evidence_type:
+            manual_info['evidence_type'] = evidence_type
+        if title:
+            manual_info['title'] = title
+        if related_persons:
+            manual_info['related_persons'] = json.loads(related_persons)
+        if event_time:
+            manual_info['event_time'] = event_time
+        if extract_time:
+            manual_info['extract_time'] = extract_time
+
+        result = import_evidence(
+            file_path=tmp_path,
+            case_id=case_id,
+            manual_info=manual_info if manual_info else None
+        )
+
+        clear_cache()
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    finally:
+        import os
+        os.unlink(tmp_path)
+
+
+@app.get("/api/evidence/case/{case_id}")
+def api_get_case_evidences(case_id: str):
+    """获取案件的所有证据"""
+    df = get_case_evidences(case_id)
+    return _df_to_records(df)
+
+
+@app.get("/api/evidence/person/{person_id}")
+def api_get_person_evidences(person_id: str):
+    """获取某人相关的所有证据"""
+    df = get_person_evidences(person_id)
+    return _df_to_records(df)
 
 
 # ==================== 交易查询 ====================
@@ -357,7 +448,7 @@ def api_providers():
 
 # ==================== 前端静态文件 ====================
 
-FRONTEND_DIR = Path(__file__).parent / "frontend"
+FRONTEND_DIR = get_resource_path("frontend")
 
 
 @app.get("/")
