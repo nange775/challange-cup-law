@@ -248,7 +248,8 @@ def import_evidence(
             _import_financial_records(evidence_id, case_id, df_content)
 
         elif evidence_type == '聊天':
-            _import_chat_records(evidence_id, df_content or text_content)
+            data = df_content if df_content is not None else text_content
+            _import_chat_records(evidence_id, data)
 
         elif evidence_type == '通话':
             _import_call_records(evidence_id, df_content)
@@ -291,10 +292,21 @@ def import_evidence(
 def _import_statement(evidence_id: str, content: str, ai_result: dict):
     """导入供述/证言"""
     statement_id = str(uuid.uuid4())
+
+    # 从关联的人员中获取第一个person_id（如果有的话）
+    conn = get_conn()
+    person_id = conn.execute(
+        "SELECT person_id FROM person_evidence_relation WHERE evidence_id = ? LIMIT 1",
+        [evidence_id]
+    ).fetchone()
+    conn.close()
+
+    person_id = person_id[0] if person_id else None
+
     insert_statement({
         'statement_id': statement_id,
         'evidence_id': evidence_id,
-        'person_id': '',  # 稍后通过关联表确定
+        'person_id': person_id,  # 从关联表获取
         'statement_type': ai_result.get('evidence_type'),
         'content': content,
         'key_persons': json.dumps(ai_result.get('key_persons', []), ensure_ascii=False),
@@ -382,16 +394,32 @@ def _import_chat_records(evidence_id: str, data):
     chat_list = []
 
     if isinstance(data, pd.DataFrame):
+        # 获取人名到ID的映射
+        conn = get_conn()
+        name_to_id = {}
+        persons = conn.execute("SELECT user_id, name FROM persons").fetchall()
+        for user_id, name in persons:
+            if name:
+                name_to_id[name] = user_id
+        conn.close()
+
         # Excel格式的聊天记录
         for idx, row in data.iterrows():
+            sender_name = str(row.get('发送人', ''))
+            receiver_name = str(row.get('接收人', ''))
+
+            # 尝试映射到user_id，如果找不到则设为None
+            sender_id = name_to_id.get(sender_name) if sender_name in name_to_id else None
+            receiver_id = name_to_id.get(receiver_name) if receiver_name in name_to_id else None
+
             chat_list.append({
                 'message_id': f"{evidence_id}_{idx}",
                 'evidence_id': evidence_id,
-                'sender_id': row.get('发送人', ''),
-                'receiver_id': row.get('接收人', ''),
+                'sender_id': sender_id,
+                'receiver_id': receiver_id,
                 'send_time': str(row.get('时间', '')),
-                'content': row.get('内容', ''),
-                'message_type': row.get('类型', '文本')
+                'content': str(row.get('内容', '')),
+                'message_type': str(row.get('类型', '文本'))
             })
     else:
         # 文本格式的聊天记录（简单解析）
@@ -407,6 +435,15 @@ def _import_call_records(evidence_id: str, df: pd.DataFrame):
     if df is None or df.empty:
         return
 
+    # 获取人名到ID的映射
+    conn = get_conn()
+    name_to_id = {}
+    persons = conn.execute("SELECT user_id, name FROM persons").fetchall()
+    for user_id, name in persons:
+        if name:
+            name_to_id[name] = user_id
+    conn.close()
+
     column_mapping = _smart_column_mapping(df.columns, {
         'caller_id': ['主叫', 'caller', '拨打方'],
         'callee_id': ['被叫', 'callee', '接听方'],
@@ -421,11 +458,18 @@ def _import_call_records(evidence_id: str, df: pd.DataFrame):
             # 可能是 "1分30秒" 格式
             duration = _parse_duration(duration)
 
+        caller_name = str(row.get(column_mapping.get('caller_id', 'caller_id'), ''))
+        callee_name = str(row.get(column_mapping.get('callee_id', 'callee_id'), ''))
+
+        # 尝试映射到user_id，如果找不到则设为None
+        caller_id = name_to_id.get(caller_name) if caller_name in name_to_id else None
+        callee_id = name_to_id.get(callee_name) if callee_name in name_to_id else None
+
         call_list.append({
             'record_id': f"{evidence_id}_{idx}",
             'evidence_id': evidence_id,
-            'caller_id': str(row.get(column_mapping.get('caller_id', 'caller_id'), '')),
-            'callee_id': str(row.get(column_mapping.get('callee_id', 'callee_id'), '')),
+            'caller_id': caller_id,
+            'callee_id': callee_id,
             'call_time': str(row.get(column_mapping.get('call_time', 'call_time'), '')),
             'duration': int(duration)
         })
@@ -438,6 +482,15 @@ def _import_location_records(evidence_id: str, df: pd.DataFrame):
     if df is None or df.empty:
         return
 
+    # 获取人名到ID的映射
+    conn = get_conn()
+    name_to_id = {}
+    persons = conn.execute("SELECT user_id, name FROM persons").fetchall()
+    for user_id, name in persons:
+        if name:
+            name_to_id[name] = user_id
+    conn.close()
+
     column_mapping = _smart_column_mapping(df.columns, {
         'person_id': ['人员', 'person', '用户'],
         'record_time': ['时间', 'time'],
@@ -448,10 +501,13 @@ def _import_location_records(evidence_id: str, df: pd.DataFrame):
 
     location_list = []
     for idx, row in df.iterrows():
+        person_name = str(row.get(column_mapping.get('person_id', 'person_id'), ''))
+        person_id = name_to_id.get(person_name) if person_name in name_to_id else None
+
         location_list.append({
             'record_id': f"{evidence_id}_{idx}",
             'evidence_id': evidence_id,
-            'person_id': str(row.get(column_mapping.get('person_id', 'person_id'), '')),
+            'person_id': person_id,
             'record_time': str(row.get(column_mapping.get('record_time', 'record_time'), '')),
             'latitude': float(row.get(column_mapping.get('latitude', 'latitude'), 0)),
             'longitude': float(row.get(column_mapping.get('longitude', 'longitude'), 0)),
@@ -466,6 +522,15 @@ def _import_system_logs(evidence_id: str, df: pd.DataFrame):
     if df is None or df.empty:
         return
 
+    # 获取人名到ID的映射
+    conn = get_conn()
+    name_to_id = {}
+    persons = conn.execute("SELECT user_id, name FROM persons").fetchall()
+    for user_id, name in persons:
+        if name:
+            name_to_id[name] = user_id
+    conn.close()
+
     column_mapping = _smart_column_mapping(df.columns, {
         'person_id': ['用户', 'user', '操作人'],
         'log_time': ['时间', 'time'],
@@ -476,10 +541,13 @@ def _import_system_logs(evidence_id: str, df: pd.DataFrame):
 
     log_list = []
     for idx, row in df.iterrows():
+        person_name = str(row.get(column_mapping.get('person_id', 'person_id'), ''))
+        person_id = name_to_id.get(person_name) if person_name in name_to_id else None
+
         log_list.append({
             'log_id': f"{evidence_id}_{idx}",
             'evidence_id': evidence_id,
-            'person_id': str(row.get(column_mapping.get('person_id', 'person_id'), '')),
+            'person_id': person_id,
             'log_time': str(row.get(column_mapping.get('log_time', 'log_time'), '')),
             'action': str(row.get(column_mapping.get('action', 'action'), '')),
             'ip_address': str(row.get(column_mapping.get('ip_address', 'ip_address'), '')),

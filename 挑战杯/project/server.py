@@ -15,9 +15,9 @@ import hashlib
 
 sys.path.insert(0, str(Path(__file__).parent))
 from src.database import (
-    init_db, get_db_stats, get_all_persons, get_person_transactions, clear_db,
-    get_counterpart_summary, get_bank_cards, get_all_cases, create_case,
-    get_case_info, get_case_evidences, get_person_evidences
+    init_db, get_db_stats, get_all_persons, get_persons_with_transactions,
+    get_person_transactions, clear_db, get_counterpart_summary, get_bank_cards,
+    get_all_cases, create_case, get_case_info, get_case_evidences, get_person_evidences
 )
 from src.ingest import ingest_tenpay_data, auto_discover_and_ingest
 from src.anomaly import run_all_detections, get_risk_summary
@@ -100,9 +100,16 @@ def api_stats():
 
 
 @app.get("/api/persons")
-def api_persons():
-    """所有人员列表"""
-    df = get_all_persons()
+def api_persons(with_transactions: bool = True, exclude_companies: bool = True):
+    """
+    人员列表
+    with_transactions: 是否只返回有交易记录的人员（默认true）
+    exclude_companies: 是否排除企业（默认true）
+    """
+    if with_transactions:
+        df = get_persons_with_transactions(exclude_companies=exclude_companies)
+    else:
+        df = get_all_persons()
     return _df_to_records(df)
 
 

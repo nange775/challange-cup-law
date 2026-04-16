@@ -107,7 +107,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS statements (
             statement_id  TEXT PRIMARY KEY,
             evidence_id   TEXT NOT NULL,
-            person_id     TEXT NOT NULL,
+            person_id     TEXT,
             statement_type TEXT,  -- 供述/辩解/证言
             content       TEXT,
             key_persons   TEXT,   -- JSON: 提到的人名
@@ -227,6 +227,37 @@ def clear_db():
 def get_all_persons() -> pd.DataFrame:
     conn = get_conn()
     df = pd.read_sql("SELECT * FROM persons", conn)
+    conn.close()
+    return df
+
+
+def get_persons_with_transactions(exclude_companies: bool = False) -> pd.DataFrame:
+    """
+    获取有交易记录的人员列表
+    exclude_companies: 是否排除企业（默认false，显示所有）
+    """
+    conn = get_conn()
+
+    where_clause = ""
+    if exclude_companies:
+        # 排除名字中包含公司关键词的
+        where_clause = """
+        AND p.name NOT LIKE '%公司%'
+        AND p.name NOT LIKE '%有限%'
+        AND p.name NOT LIKE '%画廊%'
+        AND p.name NOT LIKE '%商贸%'
+        AND p.name NOT LIKE '%集团%'
+        """
+
+    df = pd.read_sql(f"""
+        SELECT DISTINCT p.*, COUNT(t.id) as tx_count
+        FROM persons p
+        INNER JOIN transactions t ON p.user_id = t.user_id
+        WHERE 1=1 {where_clause}
+        GROUP BY p.user_id
+        HAVING tx_count > 0
+        ORDER BY tx_count DESC
+    """, conn)
     conn.close()
     return df
 

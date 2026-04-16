@@ -35,14 +35,20 @@ venv.bak/
 
 # VS Code
 .vscode/
+*.code-workspace
 
-# 数据库文件
+# 数据库文件（敏感数据）
 *.db
 *.sqlite
 *.sqlite3
 project/data/*.db
 project/data/*.db-*
+project/data/*.db-shm
+project/data/*.db-wal
 project/data/investigation*.db
+
+# 但保留示例数据库（包含假数据，供测试使用）
+!project/data/investigation.db
 
 # 证据文件（敏感数据）
 project/data/evidence_files/
@@ -51,14 +57,24 @@ project/data/*.xlsx
 project/data/*.pdf
 project/data/*.docx
 project/data/*.doc
+project/data/*.txt
+project/data/fake data/
+!project/data/fake\ data/*.pdf
+
+# 假数据目录
+project/fakedata/
+!project/fakedata/.gitkeep
 
 # 测试数据
 project/data/test_*.xlsx
 project/data/test_*.xls
+project/test_*.py
+project/*_test.py
 
 # 日志文件
 *.log
 logs/
+project/*.log
 
 # 临时文件
 *.tmp
@@ -68,23 +84,29 @@ logs/
 *~
 .DS_Store
 Thumbs.db
+*~
 
 # Jupyter Notebook
 .ipynb_checkpoints
+*.ipynb
 
 # 环境变量（敏感信息）
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
+*.env
 
 # API密钥配置
 *_api_key.txt
+*_api_key.json
 secrets/
+.secrets/
 
 # 打包文件
 *.zip
 *.tar.gz
 *.rar
+*.7z
 
 # PyInstaller
 *.spec
@@ -94,18 +116,26 @@ project/dist/
 # 系统文件
 desktop.ini
 .DS_Store
+Thumbs.db
 
 # 备份文件
 *.bak
 *_backup_*
+backup/
+backups/
 
-# 前端node_modules（如果后续添加前端构建）
+# 前端相关
 node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+.pnp.*
+.yarn/
 
-# Coverage reports
+# Streamlit
+.streamlit/secrets.toml
+
+# 测试覆盖率
 htmlcov/
 .tox/
 .coverage
@@ -117,10 +147,32 @@ coverage.xml
 .hypothesis/
 .pytest_cache/
 
-# mypy
+# 类型检查
 .mypy_cache/
 .dmypy.json
 dmypy.json
-
-# Pyre type checker
 .pyre/
+.pytype/
+
+# 编辑器
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+.settings/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# 生成的文档
+docs/_build/
+site/
