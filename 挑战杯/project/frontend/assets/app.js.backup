@@ -19,7 +19,7 @@ const app = createApp({
         ];
 
         const homeCards = [
-            { page: 'import', icon: '\u{1F4E5}', title: '数据导入', desc: '上传财付通交易明细与注册信息, 系统自动清洗融合并入库。' },
+            { page: 'import', icon: '\u{1F4E5}', title: '数据导入', desc: '支持多格式文件导入，包括财付通数据、Excel、PDF、Word及图片OCR，系统自动识别格式、提取信息并录入。' },
             { page: 'analysis', icon: '\u{1F4CA}', title: '交易分析', desc: '六大异常检测算法: 化整为零、深夜交易、财富突增等。' },
             { page: 'graph', icon: '\u{1F578}', title: '关系图谱', desc: '交互式资金流向网络, 识别过桥账户和资金回流。' },
             { page: 'profile', icon: '\u{1F464}', title: '人员画像', desc: '综合画像报告: 风险评级、关系人、侦查建议。' },

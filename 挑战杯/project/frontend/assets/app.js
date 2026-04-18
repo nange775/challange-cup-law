@@ -16,15 +16,16 @@ const app = createApp({
             { page: 'graph', icon: '\u{1F578}', label: '关系图谱' },
             { page: 'profile', icon: '\u{1F464}', label: '人员画像' },
             { page: 'agent', icon: '\u{1F916}', label: 'AI 智能侦查' },
+            { page: 'help', icon: '\u{1F4AC}', label: '系统说明' },
         ];
 
         const homeCards = [
-            { page: 'import', icon: '\u{1F4E5}', title: '数据导入', desc: '上传财付通交易明细与注册信息, 系统自动清洗融合并入库。' },
+            { page: 'import', icon: '\u{1F4E5}', title: '数据导入', desc: '支持多格式文件导入，包括财付通数据、Excel、PDF、Word及图片OCR，系统自动识别格式、提取信息并录入。' },
             { page: 'analysis', icon: '\u{1F4CA}', title: '交易分析', desc: '六大异常检测算法: 化整为零、深夜交易、财富突增等。' },
             { page: 'graph', icon: '\u{1F578}', title: '关系图谱', desc: '交互式资金流向网络, 识别过桥账户和资金回流。' },
             { page: 'profile', icon: '\u{1F464}', title: '人员画像', desc: '综合画像报告: 风险评级、关系人、侦查建议。' },
             { page: 'agent', icon: '\u{1F916}', title: 'AI 智能侦查', desc: '大模型对话式分析, 自然语言查询, 自动调用工具。' },
-            { page: 'import', icon: '\u2139', title: '系统说明', desc: '前后端分离架构, FastAPI后端 + Vue3前端。' },
+            { page: 'help', icon: '\u2139', title: '系统说明', desc: '前后端分离架构, FastAPI后端 + Vue3前端。' },
         ];
 
         // ==================== 数据加载 ====================
@@ -45,6 +46,46 @@ const app = createApp({
         const uploading = ref(false);
         const scanDir = ref('');
         const scanning = ref(false);
+
+        // ==================== 证据导入 ====================
+        const evidenceFiles = ref([]);
+        const evidenceFileList = ref([]);
+        const evidenceCaseId = ref('');
+        const evidenceType = ref('auto');
+        const evidenceDesc = ref('');
+        const evidenceUploading = ref(false);
+        const evidenceResults = ref([]);
+
+        // 财付通文件配对验证状态
+        const tenpayValidation = reactive({
+            hasTrades: false,
+            hasRegInfo: false,
+            isValid: false
+        });
+
+        // 检查财付通文件配对
+        function checkTenpayPair() {
+            const files = evidenceFiles.value;
+            const hasTrades = files.some(f =>
+                f.name.toLowerCase().includes('tenpaytrades') ||
+                f.name.toLowerCase().includes('trades')
+            );
+            const hasRegInfo = files.some(f =>
+                f.name.toLowerCase().includes('tenpayreginfo') ||
+                f.name.toLowerCase().includes('reginfo')
+            );
+
+            tenpayValidation.hasTrades = hasTrades;
+            tenpayValidation.hasRegInfo = hasRegInfo;
+            tenpayValidation.isValid = (hasTrades && hasRegInfo) || (!hasTrades && !hasRegInfo);
+
+            // 如果检测到财付通文件但配对不正确，显示警告
+            if (hasTrades && !hasRegInfo) {
+                ElementPlus.ElMessage.warning('检测到交易明细文件，还需导入对应的注册信息文件(TenpayRegInfo1.xls)');
+            } else if (!hasTrades && hasRegInfo) {
+                ElementPlus.ElMessage.warning('检测到注册信息文件，还需导入对应的交易明细文件(TenpayTrades.xls)');
+            }
+        }
 
         async function doUpload() {
             uploading.value = true;
@@ -100,6 +141,69 @@ const app = createApp({
             } catch (e) {
                 ElementPlus.ElMessage.error('清空失败: ' + e.message);
             }
+        }
+
+        async function doEvidenceUpload() {
+            if (evidenceFiles.value.length === 0) {
+                ElementPlus.ElMessage.warning('请选择要导入的文件');
+                return;
+            }
+
+            // 财付通文件配对检测
+            const hasTrades = evidenceFiles.value.some(f =>
+                f.name.toLowerCase().includes('tenpaytrades') ||
+                f.name.toLowerCase().includes('trades')
+            );
+            const hasRegInfo = evidenceFiles.value.some(f =>
+                f.name.toLowerCase().includes('tenpayreginfo') ||
+                f.name.toLowerCase().includes('reginfo')
+            );
+
+            if (hasTrades && !hasRegInfo) {
+                ElementPlus.ElMessage.warning('检测到交易明细文件，还需导入对应的注册信息文件(TenpayRegInfo1.xls)');
+                return;
+            }
+            if (!hasTrades && hasRegInfo) {
+                ElementPlus.ElMessage.warning('检测到注册信息文件，还需导入对应的交易明细文件(TenpayTrades.xls)');
+                return;
+            }
+
+            evidenceUploading.value = true;
+            evidenceResults.value = [];
+
+            const results = [];
+            for (const file of evidenceFiles.value) {
+                const formData = new FormData();
+                formData.append('file', file);
+                formData.append('case_id', evidenceCaseId.value || 'AUTO-' + Date.now());
+                formData.append('evidence_type', evidenceType.value === 'auto' ? '' : evidenceType.value);
+                formData.append('description', evidenceDesc.value || '自动导入');
+
+                try {
+                    const res = await axios.post(`${API}/evidence/upload`, formData);
+                    results.push({
+                        filename: file.name,
+                        status: res.data.status || 'success',
+                        evidence_type: res.data.evidence_type || evidenceType.value,
+                        entities: res.data.entities || null
+                    });
+                    ElementPlus.ElMessage.success(`导入成功: ${file.name}`);
+                } catch (e) {
+                    results.push({
+                        filename: file.name,
+                        status: 'error',
+                        error: e.response?.data?.detail || e.message
+                    });
+                    ElementPlus.ElMessage.error(`导入失败: ${file.name} - ${e.response?.data?.detail || e.message}`);
+                }
+            }
+
+            evidenceResults.value = results;
+            evidenceUploading.value = false;
+
+            // 清空文件列表
+            evidenceFiles.value = [];
+            evidenceFileList.value = [];
         }
 
         // ==================== 交易分析 ====================
@@ -500,6 +604,8 @@ const app = createApp({
             currentPage, stats, persons, selectedUser, navItems, homeCards,
             // 导入
             importTab, uploadFiles, uploading, doUpload, scanDir, scanning, doScan, doClear,
+            // 证据导入
+            evidenceFiles, evidenceFileList, evidenceCaseId, evidenceType, evidenceDesc, evidenceUploading, evidenceResults, doEvidenceUpload,
             // 分析
             analysisData, anomalyData, counterparts, analysisSummary,
             analysisLoading, activeAnalysisTab,
@@ -512,6 +618,8 @@ const app = createApp({
             chatMessages, chatHistory, chatInput, chatLoading, chatBox,
             providers, agentConfig, showApiKey, currentProviderModels, sampleQuestions,
             onProviderChange, sendChat, renderMd,
+            // 财付通验证
+            tenpayValidation, checkTenpayPair,
         };
     }
 });

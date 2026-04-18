@@ -110,3 +110,19 @@ def get_provider_api_key(provider_id: str) -> str:
     provider = LLM_PROVIDERS.get(provider_id, {})
     env_key = provider.get("env_key", "")
     return os.environ.get(env_key, "") if env_key else ""
+
+
+# ============================================================
+# OCR 配置
+# ============================================================
+# Tesseract OCR 可执行文件路径（Windows/Linux/Mac）
+# Windows: r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+# Linux: '/usr/bin/tesseract'
+# Mac: '/usr/local/bin/tesseract' (通过 Homebrew 安装)
+TESSERACT_CMD = os.environ.get('TESSERACT_CMD', '/usr/bin/tesseract')
+
+# OCR 支持的图像格式
+OCR_SUPPORTED_FORMATS = ['.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif']
+
+# OCR 语言配置（支持中英文）
+OCR_LANG = 'chi_sim+eng'  # 简体中文 + 英文

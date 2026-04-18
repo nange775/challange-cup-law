@@ -3,7 +3,7 @@ import json
 import math
 from pathlib import Path
 from typing import Optional
-from fastapi import FastAPI, UploadFile, File, Query, HTTPException
+from fastapi import FastAPI, UploadFile, File, Query, HTTPException, Form
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,6 +12,8 @@ import tempfile
 import sys
 import pandas as pd
 import hashlib
+import os
+from datetime import datetime
 
 sys.path.insert(0, str(Path(__file__).parent))
 from src.database import (
@@ -25,6 +27,7 @@ from src.graph_analysis import build_transaction_graph, get_network_metrics, fin
 from src.profiler import generate_profile, generate_report_text
 from src.agent import chat_with_agent, _resolve_user_id
 from src.evidence_import import import_evidence
+from src.unified_import import UnifiedImportService
 from config import LLM_PROVIDERS, get_resource_path
 
 # 初始化
@@ -113,6 +116,35 @@ def api_persons(with_transactions: bool = True, exclude_companies: bool = True):
     return _df_to_records(df)
 
 
+@app.post("/api/evidence/import")
+async def import_evidence_file(
+    file: UploadFile = File(...),
+    case_id: int = Form(...),
+    evidence_type: str = Form("auto"),
+    description: str = Form("")
+):
+    """统一证据导入接口"""
+
+    # 保存上传文件到临时目录
+    temp_path = f"/tmp/{file.filename}"
+    with open(temp_path, "wb") as f:
+        f.write(await file.read())
+
+    # 使用统一导入服务
+    service = UnifiedImportService(case_id, uploader=" investigator")
+    result = service.import_file(
+        temp_path,
+        evidence_type=evidence_type,
+        description=description
+    )
+
+    # 清理临时文件
+    os.remove(temp_path)
+
+    if result["status"] == "error":
+        raise HTTPException(status_code=400, detail=result["message"])
+
+    return result
 @app.post("/api/upload")
 async def api_upload(trades: UploadFile = File(...), reginfo: UploadFile = File(...)):
     """上传交易明细和注册信息文件"""
@@ -182,12 +214,12 @@ def api_get_case(case_id: str):
 @app.post("/api/evidence/upload")
 async def api_upload_evidence(
     file: UploadFile = File(...),
-    case_id: str = Query(...),
-    evidence_type: Optional[str] = None,
-    title: Optional[str] = None,
-    related_persons: Optional[str] = None,  # JSON字符串
-    event_time: Optional[str] = None,
-    extract_time: Optional[str] = None
+    case_id: Optional[str] = Form(None),
+    evidence_type: Optional[str] = Form(None),
+    title: Optional[str] = Form(None),
+    related_persons: Optional[str] = Form(None),  # JSON字符串
+    event_time: Optional[str] = Form(None),
+    extract_time: Optional[str] = Form(None)
 ):
     """上传证据文件（全自动识别）"""
     with tempfile.NamedTemporaryFile(delete=False, suffix=Path(file.filename).suffix) as tmp:
@@ -208,9 +240,12 @@ async def api_upload_evidence(
         if extract_time:
             manual_info['extract_time'] = extract_time
 
+        # 如果没有提供case_id，生成一个默认的
+        actual_case_id = case_id or f"AUTO-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+
         result = import_evidence(
             file_path=tmp_path,
-            case_id=case_id,
+            case_id=actual_case_id,
             manual_info=manual_info if manual_info else None
         )
 

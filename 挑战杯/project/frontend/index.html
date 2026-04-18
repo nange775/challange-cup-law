@@ -41,7 +41,7 @@
                 <div v-if="currentPage==='home'" class="page">
                     <div class="page-header">
                         <h1>检察侦查画像系统</h1>
-                        <p class="subtitle">检察侦查画像模型 — 一种数据处理、分析、线索分析一体化的侦查参考工具</p>
+                        <p class="subtitle">检察侦查画像模型 —— 一种数据处理、分析、线索分析一体化的侦查参考工具</p>
                     </div>
                     <div class="card-grid">
                         <div v-for="card in homeCards" :key="card.page" class="home-card" @click="currentPage=card.page">
@@ -59,7 +59,111 @@
                 <div v-if="currentPage==='import'" class="page">
                     <div class="page-header"><h2>数据导入</h2></div>
 
-                    <div class="section-card">
+                    <!-- 多格式数据导入 -->
+                    <div class="section-card" style="margin-top:20px">
+                        <div class="section-title">多格式证据导入</div>
+                        <div class="upload-area">
+                            <div class="upload-row">
+                                <div class="upload-item" style="flex:1">
+                                    <div class="upload-label">证据文件 (支持扫描件OCR)</div>
+                                    <el-upload ref="evidenceUpload" :auto-upload="false" :limit="10"
+                                        accept=".pdf,.doc,.docx,.txt,.xls,.xlsx,.jpg,.jpeg,.png,.tif,.tiff"
+                                        :on-change="(f)=>{evidenceFiles.push(f.raw);checkTenpayPair();}" :on-remove="(f)=>{evidenceFiles=evidenceFiles.filter(fi=>fi!==f.raw);checkTenpayPair();}"
+                                        :file-list="evidenceFileList" multiple>
+                                        <template #trigger>
+                                            <el-button type="primary">选择文件</el-button>
+                                        </template>
+                                        <template #tip>
+                                            <div class="upload-tip">
+                                                <strong>支持格式:</strong> PDF, Word, Excel, TXT, 图片(JPG/PNG/TIFF)<br>
+                                                <strong>财付通数据:</strong> 请同时上传 TenpayTrades.xls (交易明细) 和 TenpayRegInfo1.xls (注册信息)<br>
+                                                <span style="color:#f56c6c">图片文件将自动进行OCR文字识别</span>
+                                            </div>
+                                        </template>
+                                    </el-upload>
+                                </div>
+                            </div>
+
+                            <!-- 财付通文件配对验证提示 -->
+                            <div v-if="tenpayValidation.hasTrades || tenpayValidation.hasRegInfo" style="margin:15px 0;padding:12px 15px;border-radius:4px;"
+                                :style="{backgroundColor: tenpayValidation.isValid ? '#f0f9ff' : '#fff0f0', border: '1px solid ' + (tenpayValidation.isValid ? '#1890ff' : '#ff4d4f')}">
+                                <div v-if="tenpayValidation.isValid" style="color:#1890ff;display:flex;align-items:center;gap:8px">
+                                    <span>✅</span>
+                                    <span>财付通文件配对正确：已检测到交易明细和注册信息文件</span>
+                                </div>
+                                <div v-else-if="tenpayValidation.hasTrades && !tenpayValidation.hasRegInfo" style="color:#ff4d4f;display:flex;align-items:center;gap:8px">
+                                    <span>⚠️</span>
+                                    <span>请同时导入注册信息文件（TenpayRegInfo1.xls）</span>
+                                </div>
+                                <div v-else-if="!tenpayValidation.hasTrades && tenpayValidation.hasRegInfo" style="color:#ff4d4f;display:flex;align-items:center;gap:8px">
+                                    <span>⚠️</span>
+                                    <span>请同时导入交易明细文件（TenpayTrades.xls）</span>
+                                </div>
+                            </div>
+
+                            <div class="upload-row" style="margin-top:20px">
+                                <div class="upload-item" style="flex:1">
+                                    <div class="upload-label">证据类型</div>
+                                    <el-select v-model="evidenceType" placeholder="自动识别" style="width:100%">
+                                        <el-option label="自动识别" value="auto"></el-option>
+                                        <el-option label="财付通数据 (Tenpay)" value="tenpay_data"></el-option>
+                                        <el-option label="交易流水" value="transaction_flow"></el-option>
+                                        <el-option label="讯问笔录" value="interrogation"></el-option>
+                                        <el-option label="证人证言" value="testimony"></el-option>
+                                        <el-option label="合同协议" value="contract"></el-option>
+                                        <el-option label="法律文书" value="legal_doc"></el-option>
+                                        <el-option label="鉴定意见" value="appraisal"></el-option>
+                                        <el-option label="笔录" value="record"></el-option>
+                                        <el-option label="测谎结果" value="polygraph"></el-option>
+                                        <el-option label="聊天记录" value="chat"></el-option>
+                                        <el-option label="通话记录" value="call"></el-option>
+                                        <el-option label="轨迹数据" value="location"></el-option>
+                                        <el-option label="系统日志" value="log"></el-option>
+                                        <el-option label="票据凭证" value="invoice"></el-option>
+                                        <el-option label="其他" value="other"></el-option>
+                                    </el-select>
+                                </div>
+                            </div>
+
+                            <div class="upload-row" style="margin-top:20px">
+                                <div class="upload-item" style="flex:1">
+                                    <div class="upload-label">证据描述 (可选)</div>
+                                    <el-input v-model="evidenceDesc" type="textarea" :rows="3" placeholder="输入证据的描述信息，如来源、提取时间、提取人员等&#10;&#10;财付通数据导入说明：&#10;- 请同时上传 TenpayTrades.xls (交易明细) 和 TenpayRegInfo1.xls (注册信息)&#10;- 系统将自动解析并匹配用户身份与交易记录"></el-input>
+                                </div>
+                            </div>
+
+                            <el-button type="success" size="large" @click="doEvidenceUpload" :loading="evidenceUploading"
+                                :disabled="evidenceFiles.length===0 || (tenpayValidation.hasTrades !== tenpayValidation.hasRegInfo)" style="margin-top:20px">
+                                导入数据 ({{evidenceFiles.length}}个文件)
+                            </el-button>
+
+                            <div v-if="evidenceResults.length>0" class="upload-results" style="margin-top:20px">
+                                <div class="section-title">导入结果</div>
+                                <el-table :data="evidenceResults" stripe size="small">
+                                    <el-table-column prop="filename" label="文件名" min-width="200"></el-table-column>
+                                    <el-table-column prop="status" label="状态" width="100">
+                                        <template #default="{row}">
+                                            <el-tag :type="row.status==='success'?'success':row.status==='duplicate'?'warning':'danger'" size="small">
+                                                {{row.status==='success'?'成功':row.status==='duplicate'?'重复':'失败'}}
+                                            </el-tag>
+                                        </template>
+                                    </el-table-column>
+                                    <el-table-column prop="evidence_type" label="识别类型" width="120"></el-table-column>
+                                    <el-table-column prop="entities" label="提取实体" min-width="200">
+                                        <template #default="{row}">
+                                            <div v-if="row.entities">
+                                                <el-tag v-for="name in (row.entities.names||[]).slice(0,3)" :key="name" size="small" style="margin:2px">{{name}}</el-tag>
+                                            </div>
+                                        </template>
+                                    </el-table-column>
+                                </el-table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 传统财付通导入 -->
+                    <div class="section-card" style="margin-top:20px">
+                        <div class="section-title">财付通数据导入（传统方式）</div>
                         <el-tabs v-model="importTab">
                             <el-tab-pane label="手动上传" name="upload">
                                 <div class="upload-area">
@@ -403,6 +507,73 @@
                                 <button class="config-btn" @click="chatMessages=[];chatHistory=[]">清空对话</button>
                             </div>
                         </div>
+                    </div>
+                </div>
+
+                <!-- ========== 系统说明 ========== -->
+                <div v-if="currentPage==='help'" class="page">
+                    <div class="page-header">
+                        <h2>系统说明</h2>
+                        <p class="subtitle">检察侦查画像系统使用指南</p>
+                    </div>
+                    <div class="section-card">
+                        <div class="section-title">系统架构</div>
+                        <p>本系统采用前后端分离架构：</p>
+                        <ul style="margin-left: 20px; line-height: 1.8;">
+                            <li><strong>后端</strong>：FastAPI (Python) - 提供RESTful API服务</li>
+                            <li><strong>前端</strong>：Vue 3 + Element Plus - 响应式用户界面</li>
+                            <li><strong>数据库</strong>：SQLite - 数据持久化存储</li>
+                            <li><strong>可视化</strong>：ECharts - 图表和关系图谱展示</li>
+                        </ul>
+                    </div>
+                    <div class="section-card" style="margin-top: 20px;">
+                        <div class="section-title">功能模块</div>
+                        <div class="help-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; margin-top: 15px;">
+                            <div class="help-item">
+                                <h4>📥 数据导入</h4>
+                                <p>支持多格式文件导入，包括财付通数据、Excel、PDF、Word及图片OCR，系统自动识别格式、提取信息并录入。</p>
+                            </div>
+                            <div class="help-item">
+                                <h4>📊 交易分析</h4>
+                                <p>六大异常检测算法：化整为零、深夜交易、财富突增等。</p>
+                            </div>
+                            <div class="help-item">
+                                <h4>🕸️ 关系图谱</h4>
+                                <p>交互式资金流向网络，识别过桥账户和资金回流。</p>
+                            </div>
+                            <div class="help-item">
+                                <h4>👤 人员画像</h4>
+                                <p>综合画像报告：风险评级、关系人、侦查建议。</p>
+                            </div>
+                            <div class="help-item">
+                                <h4>🤖 AI 智能侦查</h4>
+                                <p>大模型对话式分析，自然语言查询，自动调用工具。</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="section-card" style="margin-top: 20px;">
+                        <div class="section-title">数据格式说明</div>
+                        <p>系统支持导入多种格式的证据和数据文件：</p>
+                        <ul style="margin-left: 20px; line-height: 1.8;">
+                            <li><strong>财付通数据</strong> - 需同时上传 TenpayTrades.xls (交易明细) 和 TenpayRegInfo1.xls (注册信息)</li>
+                            <li><strong>文档文件</strong> - PDF, Word (DOC/DOCX), TXT, Excel (XLS/XLSX)</li>
+                            <li><strong>图像文件</strong> - JPG, JPEG, PNG, TIFF (支持自动OCR文字识别)</li>
+                        </ul>
+                        <p style="margin-top: 15px;">导入时需要指定案件ID，系统将根据文件内容自动识别证据类型并提取关键实体信息。</p>
+                    </div>
+                    <div class="section-card" style="margin-top: 20px;">
+                        <div class="section-title">使用提示</div>
+                        <ul style="margin-left: 20px; line-height: 1.8;">
+                            <li>首次使用请先通过「数据导入」功能上传相关数据文件，支持财付通数据、Excel、PDF、图片等多种格式</li>
+                            <li>分析结果仅供参考，需结合案件实际情况进一步核实</li>
+                            <li>建议使用Chrome或Edge浏览器获得最佳体验</li>
+                            <li>AI智能侦查功能需要配置API密钥</li>
+                        </ul>
+                    </div>
+                    <div class="section-card" style="margin-top: 20px;">
+                        <div class="section-title">技术支持</div>
+                        <p>如遇问题或建议，请联系技术支持团队。</p>
+                        <p style="margin-top: 10px; color: #666;">版本：v1.0.0 | 更新时间：2026.4.19</p>
                     </div>
                 </div>
 
