@@ -8,7 +8,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from config import LLM_PROVIDERS, get_provider_api_key
 from src.database import (
     get_all_persons, get_person_transactions, get_all_transactions,
-    get_counterpart_summary, get_db_stats, get_bank_cards
+    get_counterpart_summary, get_db_stats, get_bank_cards,
+    get_all_cases, get_case_evidences, get_person_evidences, get_conn
 )
 from src.anomaly import (
     run_all_detections, get_risk_summary,
@@ -124,6 +125,110 @@ TOOLS_ANTHROPIC = [
                 "top_n": {"type": "integer", "description": "返回前N个, 默认20"},
             },
             "required": ["user_id", "counterpart_type"],
+        }
+    },
+    {
+        "name": "query_cases",
+        "description": "查询数据库中所有案件的基本信息，包括案件ID、案件名称、创建时间等。",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+        }
+    },
+    {
+        "name": "query_case_evidences",
+        "description": "查询指定案件的所有证据列表，包括证据类型、标题、上传时间、AI摘要等。用于了解案件有哪些证据材料。",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "case_id": {"type": "string", "description": "案件ID，如 CASE_LIJIAN_2025"},
+            },
+            "required": ["case_id"],
+        }
+    },
+    {
+        "name": "query_person_evidences",
+        "description": "查询指定人员相关的所有证据列表，包括供述、证言、聊天记录、通话记录等。用于全面了解某人涉及的证据材料。",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "user_id": {"type": "string", "description": "用户ID或姓名，如 lijian001 或 李建"},
+            },
+            "required": ["user_id"],
+        }
+    },
+    {
+        "name": "query_chat_records",
+        "description": "查询指定人员的聊天记录详情，可以筛选聊天对象和时间范围。用于分析沟通内容和隐喻暗语。",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "user_id": {"type": "string", "description": "用户ID或姓名"},
+                "other_person": {"type": "string", "description": "对方姓名（可选），用于查询两人之间的聊天"},
+                "limit": {"type": "integer", "description": "返回最多多少条，默认50"},
+            },
+            "required": ["user_id"],
+        }
+    },
+    {
+        "name": "query_call_records",
+        "description": "查询指定人员的通话记录，包括主叫、被叫、通话时间、时长。用于分析通话频率和联系关系。",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "user_id": {"type": "string", "description": "用户ID或姓名"},
+                "limit": {"type": "integer", "description": "返回最多多少条，默认50"},
+            },
+            "required": ["user_id"],
+        }
+    },
+    {
+        "name": "query_location_records",
+        "description": "查询指定人员的行动轨迹记录，包括时间、经纬度、位置名称。用于分析活动轨迹和碰撞分析。",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "user_id": {"type": "string", "description": "用户ID或姓名"},
+                "limit": {"type": "integer", "description": "返回最多多少条，默认50"},
+            },
+            "required": ["user_id"],
+        }
+    },
+    {
+        "name": "query_system_logs",
+        "description": "查询指定人员的系统操作日志，包括登录、修改、删除等操作记录。用于分析异常操作行为。",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "user_id": {"type": "string", "description": "用户ID或姓名"},
+                "action": {"type": "string", "description": "操作类型（可选），如：登录/修改/删除"},
+                "limit": {"type": "integer", "description": "返回最多多少条，默认50"},
+            },
+            "required": ["user_id"],
+        }
+    },
+    {
+        "name": "query_statements",
+        "description": "查询指定人员的供述、辩解或证言笔录内容。用于了解口供内容和矛盾之处。",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "user_id": {"type": "string", "description": "用户ID或姓名"},
+                "statement_type": {"type": "string", "description": "类型（可选）：供述/辩解/证言"},
+            },
+            "required": ["user_id"],
+        }
+    },
+    {
+        "name": "query_documents",
+        "description": "查询指定案件的文书类证据，如司法文书、鉴定意见、测谎报告等。用于获取结论性意见和专业分析。",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "case_id": {"type": "string", "description": "案件ID"},
+                "doc_subtype": {"type": "string", "description": "文书子类型（可选）：司法文书/鉴定意见/辨认笔录/测谎结果"},
+            },
+            "required": ["case_id"],
         }
     },
 ]
@@ -322,6 +427,213 @@ def _execute_tool(tool_name: str, tool_input: dict) -> str:
             cols = ["trade_time", "direction", "purpose", "amount_yuan", "counterpart_name", "remark"]
             return matched[cols].to_json(orient="records", force_ascii=False)
 
+        # ========== 新增：证据系统查询工具 ==========
+
+        elif tool_name == "query_cases":
+            df = get_all_cases()
+            if df.empty:
+                return json.dumps({"message": "暂无案件数据"}, ensure_ascii=False)
+            return df.to_json(orient="records", force_ascii=False)
+
+        elif tool_name == "query_case_evidences":
+            case_id = tool_input["case_id"]
+            df = get_case_evidences(case_id)
+            if df.empty:
+                return json.dumps({"message": f"案件 {case_id} 无证据记录"}, ensure_ascii=False)
+            return df.to_json(orient="records", force_ascii=False)
+
+        elif tool_name == "query_person_evidences":
+            user_id = tool_input["user_id"]
+            df = get_person_evidences(user_id)
+            if df.empty:
+                return json.dumps({"message": f"未找到用户 {user_id} 相关的证据"}, ensure_ascii=False)
+            return df.to_json(orient="records", force_ascii=False)
+
+        elif tool_name == "query_chat_records":
+            user_id = tool_input["user_id"]
+            limit = tool_input.get("limit", 50)
+            other_person = tool_input.get("other_person", "")
+
+            conn = get_conn()
+            if other_person:
+                # 解析对方user_id
+                other_id = _resolve_user_id(other_person)
+                query = """
+                    SELECT * FROM chat_records
+                    WHERE (sender_id = ? AND receiver_id = ?)
+                       OR (sender_id = ? AND receiver_id = ?)
+                    ORDER BY send_time DESC LIMIT ?
+                """
+                df = pd.read_sql(query, conn, params=[user_id, other_id, other_id, user_id, limit])
+            else:
+                query = """
+                    SELECT * FROM chat_records
+                    WHERE sender_id = ? OR receiver_id = ?
+                    ORDER BY send_time DESC LIMIT ?
+                """
+                df = pd.read_sql(query, conn, params=[user_id, user_id, limit])
+            conn.close()
+
+            if df.empty:
+                return json.dumps({"message": "未找到聊天记录"}, ensure_ascii=False)
+            return json.dumps({
+                "说明": f"共找到{len(df)}条聊天记录",
+                "data": json.loads(df.to_json(orient="records", force_ascii=False))
+            }, ensure_ascii=False)
+
+        elif tool_name == "query_call_records":
+            user_id = tool_input["user_id"]
+            limit = tool_input.get("limit", 50)
+
+            conn = get_conn()
+            query = """
+                SELECT * FROM call_records
+                WHERE caller_id = ? OR callee_id = ?
+                ORDER BY call_time DESC LIMIT ?
+            """
+            df = pd.read_sql(query, conn, params=[user_id, user_id, limit])
+            conn.close()
+
+            if df.empty:
+                return json.dumps({"message": "未找到通话记录"}, ensure_ascii=False)
+            return json.dumps({
+                "说明": f"共找到{len(df)}条通话记录",
+                "data": json.loads(df.to_json(orient="records", force_ascii=False))
+            }, ensure_ascii=False)
+
+        elif tool_name == "query_location_records":
+            user_id = tool_input["user_id"]
+            limit = tool_input.get("limit", 50)
+
+            conn = get_conn()
+            query = """
+                SELECT * FROM location_records
+                WHERE person_id = ?
+                ORDER BY record_time DESC LIMIT ?
+            """
+            df = pd.read_sql(query, conn, params=[user_id, limit])
+            conn.close()
+
+            if df.empty:
+                return json.dumps({"message": "未找到轨迹记录"}, ensure_ascii=False)
+            return json.dumps({
+                "说明": f"共找到{len(df)}条轨迹记录",
+                "data": json.loads(df.to_json(orient="records", force_ascii=False))
+            }, ensure_ascii=False)
+
+        elif tool_name == "query_system_logs":
+            user_id = tool_input["user_id"]
+            limit = tool_input.get("limit", 50)
+            action = tool_input.get("action", "")
+
+            conn = get_conn()
+            if action:
+                query = """
+                    SELECT * FROM system_logs
+                    WHERE person_id = ? AND action LIKE ?
+                    ORDER BY log_time DESC LIMIT ?
+                """
+                df = pd.read_sql(query, conn, params=[user_id, f"%{action}%", limit])
+            else:
+                query = """
+                    SELECT * FROM system_logs
+                    WHERE person_id = ?
+                    ORDER BY log_time DESC LIMIT ?
+                """
+                df = pd.read_sql(query, conn, params=[user_id, limit])
+            conn.close()
+
+            if df.empty:
+                return json.dumps({"message": "未找到系统日志"}, ensure_ascii=False)
+            return json.dumps({
+                "说明": f"共找到{len(df)}条操作日志",
+                "data": json.loads(df.to_json(orient="records", force_ascii=False))
+            }, ensure_ascii=False)
+
+        elif tool_name == "query_statements":
+            user_id = tool_input["user_id"]
+            statement_type = tool_input.get("statement_type", "")
+
+            conn = get_conn()
+            if statement_type:
+                query = """
+                    SELECT s.*, e.title, e.upload_time
+                    FROM statements s
+                    JOIN evidence_meta e ON s.evidence_id = e.evidence_id
+                    WHERE s.person_id = ? AND s.statement_type = ?
+                """
+                df = pd.read_sql(query, conn, params=[user_id, statement_type])
+            else:
+                query = """
+                    SELECT s.*, e.title, e.upload_time
+                    FROM statements s
+                    JOIN evidence_meta e ON s.evidence_id = e.evidence_id
+                    WHERE s.person_id = ?
+                """
+                df = pd.read_sql(query, conn, params=[user_id])
+            conn.close()
+
+            if df.empty:
+                return json.dumps({"message": "未找到供述证言记录"}, ensure_ascii=False)
+
+            # 笔录内容可能很长，返回摘要信息
+            result = []
+            for _, row in df.iterrows():
+                content = row['content']
+                result.append({
+                    'title': row['title'],
+                    'statement_type': row['statement_type'],
+                    'upload_time': str(row['upload_time']),
+                    'content_preview': content[:500] + '...' if len(content) > 500 else content,
+                    'content_length': len(content)
+                })
+            return json.dumps({
+                "说明": f"共找到{len(result)}份笔录",
+                "data": result
+            }, ensure_ascii=False)
+
+        elif tool_name == "query_documents":
+            case_id = tool_input["case_id"]
+            doc_subtype = tool_input.get("doc_subtype", "")
+
+            conn = get_conn()
+            if doc_subtype:
+                query = """
+                    SELECT d.*, e.title, e.upload_time
+                    FROM documents d
+                    JOIN evidence_meta e ON d.evidence_id = e.evidence_id
+                    WHERE e.case_id = ? AND d.doc_subtype = ?
+                """
+                df = pd.read_sql(query, conn, params=[case_id, doc_subtype])
+            else:
+                query = """
+                    SELECT d.*, e.title, e.upload_time
+                    FROM documents d
+                    JOIN evidence_meta e ON d.evidence_id = e.evidence_id
+                    WHERE e.case_id = ?
+                """
+                df = pd.read_sql(query, conn, params=[case_id])
+            conn.close()
+
+            if df.empty:
+                return json.dumps({"message": "未找到文书记录"}, ensure_ascii=False)
+
+            # 文书内容可能很长，返回摘要
+            result = []
+            for _, row in df.iterrows():
+                content = row['content']
+                result.append({
+                    'title': row['title'],
+                    'doc_subtype': row['doc_subtype'],
+                    'upload_time': str(row['upload_time']),
+                    'content_preview': content[:500] + '...' if len(content) > 500 else content,
+                    'content_length': len(content)
+                })
+            return json.dumps({
+                "说明": f"共找到{len(result)}份文书",
+                "data": result
+            }, ensure_ascii=False)
+
         else:
             return json.dumps({"error": f"未知工具: {tool_name}"}, ensure_ascii=False)
 
@@ -430,6 +742,83 @@ def _chat_anthropic(messages: list, api_key: str, model: str, base_url: str = No
     return "分析迭代次数过多, 请简化问题后重试。", current_messages
 
 
+def _chat_anthropic_stream(messages: list, api_key: str, model: str, base_url: str = None):
+    """Anthropic 流式调用"""
+    import anthropic
+
+    kwargs = {"api_key": api_key}
+    if base_url:
+        kwargs["base_url"] = base_url
+
+    client = anthropic.Anthropic(**kwargs)
+    current_messages = list(messages)
+
+    for iteration in range(10):
+        # 流式调用
+        with client.messages.stream(
+            model=model,
+            max_tokens=4096,
+            system=SYSTEM_PROMPT,
+            tools=TOOLS_ANTHROPIC,
+            messages=current_messages,
+        ) as stream:
+            text_buffer = ""
+            content_blocks = []
+
+            for event in stream:
+                if hasattr(event, 'type'):
+                    # 文本内容增量
+                    if event.type == "content_block_delta":
+                        if hasattr(event, 'delta') and hasattr(event.delta, 'text'):
+                            text_buffer += event.delta.text
+                            yield {
+                                "type": "text",
+                                "content": event.delta.text,
+                                "messages": current_messages
+                            }
+
+                    # 内容块完成
+                    elif event.type == "content_block_stop":
+                        if hasattr(event, 'content_block'):
+                            content_blocks.append(event.content_block)
+
+            # 获取完整的response
+            response = stream.get_final_message()
+
+            # 处理工具调用
+            if response.stop_reason == "tool_use":
+                current_messages.append({"role": "assistant", "content": response.content})
+                tool_results = []
+
+                for block in response.content:
+                    if block.type == "tool_use":
+                        yield {
+                            "type": "tool",
+                            "content": f"\n\n🔧 调用工具: {block.name}\n",
+                            "messages": current_messages
+                        }
+                        result = _execute_tool(block.name, block.input)
+                        tool_results.append({
+                            "type": "tool_result",
+                            "tool_use_id": block.id,
+                            "content": result,
+                        })
+
+                current_messages.append({"role": "user", "content": tool_results})
+                continue  # 继续下一轮对话
+
+            # 对话结束
+            current_messages.append({"role": "assistant", "content": response.content})
+            yield {
+                "type": "done",
+                "content": "",
+                "messages": current_messages
+            }
+            return
+
+    yield {"type": "error", "content": "\n\n分析迭代次数过多。"}
+
+
 # ============================================================
 # OpenAI 兼容协议 (适用于 OpenAI / DeepSeek / Qwen / 智谱 / Moonshot 等)
 # ============================================================
@@ -484,6 +873,144 @@ def _chat_openai(messages: list, api_key: str, model: str, base_url: str) -> tup
     return "分析迭代次数过多, 请简化问题后重试。", messages
 
 
+def _chat_openai_stream(messages: list, api_key: str, model: str, base_url: str):
+    """OpenAI 兼容协议流式调用"""
+    from openai import OpenAI
+    import sys
+    import io
+    import logging
+
+    # 禁用 httpx 和 openai 的调试日志，避免编码问题
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("openai").setLevel(logging.WARNING)
+
+    # 确保在函数内也设置正确的编码
+    if sys.platform == 'win32' and hasattr(sys.stdout, 'buffer'):
+        try:
+            sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+            sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+        except:
+            pass
+
+    client = OpenAI(api_key=api_key, base_url=base_url)
+
+    # 转换消息格式
+    oai_messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    for msg in messages:
+        if isinstance(msg.get("content"), str):
+            oai_messages.append({"role": msg["role"], "content": msg["content"]})
+
+    current_messages = list(oai_messages)
+
+    for iteration in range(10):
+        try:
+            # 流式调用
+            stream = client.chat.completions.create(
+                model=model,
+                messages=current_messages,
+                tools=TOOLS_OPENAI,
+                max_tokens=4096,
+                stream=True,
+            )
+
+            text_buffer = ""
+            tool_calls_buffer = []
+            current_tool_call = None
+
+            for chunk in stream:
+                if not chunk.choices:
+                    continue
+
+                delta = chunk.choices[0].delta
+
+                # 文本内容
+                if delta.content:
+                    text_buffer += delta.content
+                    yield {
+                        "type": "text",
+                        "content": delta.content,
+                        "messages": messages
+                    }
+
+                # 工具调用
+                if delta.tool_calls:
+                    for tool_call_delta in delta.tool_calls:
+                        if tool_call_delta.index is not None:
+                            # 新的tool call
+                            if current_tool_call is None or current_tool_call['index'] != tool_call_delta.index:
+                                if current_tool_call:
+                                    tool_calls_buffer.append(current_tool_call)
+                                current_tool_call = {
+                                    'index': tool_call_delta.index,
+                                    'id': tool_call_delta.id or '',
+                                    'type': 'function',
+                                    'function': {
+                                        'name': tool_call_delta.function.name or '',
+                                        'arguments': tool_call_delta.function.arguments or ''
+                                    }
+                                }
+                            else:
+                                # 累积arguments
+                                if tool_call_delta.function.arguments:
+                                    current_tool_call['function']['arguments'] += tool_call_delta.function.arguments
+
+            # 添加最后一个tool call
+            if current_tool_call:
+                tool_calls_buffer.append(current_tool_call)
+
+            # 处理工具调用
+            if tool_calls_buffer:
+                # 构造完整的message对象
+                msg_dict = {
+                    "role": "assistant",
+                    "content": text_buffer or None,
+                    "tool_calls": tool_calls_buffer
+                }
+                current_messages.append(msg_dict)
+
+                for tool_call in tool_calls_buffer:
+                    fn_name = tool_call['function']['name']
+                    fn_args = json.loads(tool_call['function']['arguments'])
+
+                    yield {
+                        "type": "tool",
+                        "content": f"\n\n🔧 调用工具: {fn_name}\n",
+                        "messages": messages
+                    }
+
+                    result = _execute_tool(fn_name, fn_args)
+                    current_messages.append({
+                        "role": "tool",
+                        "tool_call_id": tool_call['id'],
+                        "content": result,
+                    })
+
+                continue  # 继续下一轮
+
+            # 没有工具调用，对话结束
+            yield {
+                "type": "done",
+                "content": "",
+                "messages": messages + [{"role": "assistant", "content": text_buffer}]
+            }
+            return
+
+        except Exception as e:
+            # 安全地获取错误信息，避免编码问题
+            try:
+                error_msg = str(e)
+            except:
+                error_msg = repr(e)
+
+            yield {
+                "type": "error",
+                "content": f"流式调用出错(第{iteration+1}轮): {error_msg}"
+            }
+            return
+
+    yield {"type": "error", "content": "\n\n分析迭代次数过多。"}
+
+
 # ============================================================
 # 统一入口
 # ============================================================
@@ -533,3 +1060,51 @@ def chat_with_agent(
             return _chat_openai(messages, key, use_model, use_base_url)
     except Exception as e:
         return f"调用 {provider['name']} ({use_model}) 失败: {e}", messages
+
+
+def chat_with_agent_stream(
+    messages: list,
+    provider_id: str = "anthropic",
+    api_key: str = None,
+    model: str = None,
+    base_url: str = None,
+):
+    """
+    与 Agent 对话 - 流式版本 (返回生成器)
+
+    Args:
+        messages: 对话历史
+        provider_id: 厂商ID
+        api_key: API Key
+        model: 模型名
+        base_url: 自定义 base_url
+
+    Yields:
+        dict: {"type": "text|tool|done|error", "content": str, "messages": list}
+    """
+    provider = LLM_PROVIDERS.get(provider_id, LLM_PROVIDERS["anthropic"])
+    protocol = provider["protocol"]
+
+    # 确定参数
+    key = api_key or get_provider_api_key(provider_id)
+    if not key:
+        yield {"type": "error", "content": f"请输入 {provider['name']} 的 API Key"}
+        return
+
+    use_model = model or provider["default_model"]
+    if not use_model:
+        yield {"type": "error", "content": "请指定模型名称"}
+        return
+
+    use_base_url = base_url or provider.get("base_url") or None
+
+    try:
+        if protocol == "anthropic":
+            yield from _chat_anthropic_stream(messages, key, use_model, use_base_url)
+        else:
+            if not use_base_url:
+                yield {"type": "error", "content": "OpenAI 兼容协议需要 base_url"}
+                return
+            yield from _chat_openai_stream(messages, key, use_model, use_base_url)
+    except Exception as e:
+        yield {"type": "error", "content": f"调用失败: {str(e)}"}

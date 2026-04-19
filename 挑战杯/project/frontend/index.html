@@ -59,9 +59,9 @@
                 <div v-if="currentPage==='import'" class="page">
                     <div class="page-header"><h2>数据导入</h2></div>
 
-                    <!-- 多格式数据导入 -->
+                    <!-- 统一证据导入 -->
                     <div class="section-card" style="margin-top:20px">
-                        <div class="section-title">多格式证据导入</div>
+                        <div class="section-title">证据数据导入</div>
                         <div class="upload-area">
                             <div class="upload-row">
                                 <div class="upload-item" style="flex:1">
@@ -75,9 +75,10 @@
                                         </template>
                                         <template #tip>
                                             <div class="upload-tip">
-                                                <strong>支持格式:</strong> PDF, Word, Excel, TXT, 图片(JPG/PNG/TIFF)<br>
-                                                <strong>财付通数据:</strong> 请同时上传 TenpayTrades.xls (交易明细) 和 TenpayRegInfo1.xls (注册信息)<br>
-                                                <span style="color:#f56c6c">图片文件将自动进行OCR文字识别</span>
+                                                <strong>✅ 支持格式:</strong> 财付通XLS、Excel、PDF、Word、图片(JPG/PNG/TIFF)<br>
+                                                <strong>✅ 智能识别:</strong> 自动识别文件类型、提取关键信息并关联案件<br>
+                                                <strong>⚠️ 财付通数据:</strong> 需同时上传交易明细(TenpayTrades.xls) + 注册信息(TenpayRegInfo1.xls)<br>
+                                                <strong>🔍 OCR识别:</strong> 图片文件将自动进行文字识别并提取结构化数据
                                             </div>
                                         </template>
                                     </el-upload>
@@ -161,48 +162,6 @@
                         </div>
                     </div>
 
-                    <!-- 传统财付通导入 -->
-                    <div class="section-card" style="margin-top:20px">
-                        <div class="section-title">财付通数据导入（传统方式）</div>
-                        <el-tabs v-model="importTab">
-                            <el-tab-pane label="手动上传" name="upload">
-                                <div class="upload-area">
-                                    <div class="upload-row">
-                                        <div class="upload-item">
-                                            <div class="upload-label">交易明细文件</div>
-                                            <el-upload ref="tradesUpload" :auto-upload="false" :limit="1" accept=".xls,.xlsx"
-                                                :on-change="(f)=>{uploadFiles.trades=f.raw}" :on-remove="()=>{uploadFiles.trades=null}">
-                                                <template #trigger>
-                                                    <el-button type="primary">选择 TenpayTrades.xls</el-button>
-                                                </template>
-                                                <template #tip><div class="upload-tip">支持 .xls / .xlsx 格式</div></template>
-                                            </el-upload>
-                                        </div>
-                                        <div class="upload-item">
-                                            <div class="upload-label">注册信息文件</div>
-                                            <el-upload ref="regUpload" :auto-upload="false" :limit="1" accept=".xls,.xlsx"
-                                                :on-change="(f)=>{uploadFiles.reg=f.raw}" :on-remove="()=>{uploadFiles.reg=null}">
-                                                <template #trigger>
-                                                    <el-button type="primary">选择 TenpayRegInfo1.xls</el-button>
-                                                </template>
-                                                <template #tip><div class="upload-tip">支持 .xls / .xlsx 格式</div></template>
-                                            </el-upload>
-                                        </div>
-                                    </div>
-                                    <el-button type="success" size="large" @click="doUpload" :loading="uploading"
-                                        :disabled="!uploadFiles.trades||!uploadFiles.reg" style="margin-top:20px">
-                                        导入数据
-                                    </el-button>
-                                </div>
-                            </el-tab-pane>
-                            <el-tab-pane label="自动扫描目录" name="scan">
-                                <div style="display:flex;gap:12px;align-items:flex-start;margin-top:12px">
-                                    <el-input v-model="scanDir" placeholder="输入包含 Tenpay 数据的目录路径" style="flex:1" size="large"/>
-                                    <el-button type="success" size="large" @click="doScan" :loading="scanning">扫描并导入</el-button>
-                                </div>
-                            </el-tab-pane>
-                        </el-tabs>
-                    </div>
 
                     <div class="section-card" style="margin-top:20px">
                         <div class="section-title">当前数据概览</div>

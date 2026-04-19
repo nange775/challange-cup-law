@@ -4,6 +4,7 @@ import math
 from pathlib import Path
 from typing import Optional
 from fastapi import FastAPI, UploadFile, File, Query, HTTPException, Form
+from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -25,7 +26,7 @@ from src.ingest import ingest_tenpay_data, auto_discover_and_ingest
 from src.anomaly import run_all_detections, get_risk_summary
 from src.graph_analysis import build_transaction_graph, get_network_metrics, find_bridge_accounts, find_fund_cycles, get_top_counterparts, generate_pyvis_html
 from src.profiler import generate_profile, generate_report_text
-from src.agent import chat_with_agent, _resolve_user_id
+from src.agent import chat_with_agent, chat_with_agent_stream, _resolve_user_id
 from src.evidence_import import import_evidence
 from src.unified_import import UnifiedImportService
 from config import LLM_PROVIDERS, get_resource_path
@@ -465,7 +466,7 @@ class ChatRequest(BaseModel):
 
 @app.post("/api/chat")
 def api_chat(req: ChatRequest):
-    """AI Agent 对话"""
+    """AI Agent 对话（非流式）"""
     reply, updated = chat_with_agent(
         messages=req.messages,
         provider_id=req.provider_id,
@@ -479,6 +480,39 @@ def api_chat(req: ChatRequest):
         if isinstance(msg.get("content"), str):
             simple_history.append(msg)
     return {"reply": reply, "history": simple_history}
+
+
+@app.post("/api/chat/stream")
+async def api_chat_stream(req: ChatRequest):
+    """AI Agent 对话（流式）"""
+    import json
+
+    async def generate():
+        try:
+            for chunk in chat_with_agent_stream(
+                messages=req.messages,
+                provider_id=req.provider_id,
+                api_key=req.api_key or None,
+                model=req.model or None,
+                base_url=req.base_url or None,
+            ):
+                # 使用SSE格式
+                yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            error_chunk = {"type": "error", "content": str(e)}
+            yield f"data: {json.dumps(error_chunk, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        }
+    )
 
 
 @app.get("/api/providers")
@@ -504,5 +538,19 @@ app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="fronte
 
 
 if __name__ == "__main__":
+    import sys
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8001)
+
+    # Windows 环境设置 UTF-8 编码
+    if sys.platform == 'win32':
+        import io
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+        sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=8001,
+        timeout_keep_alive=300,
+        log_level="info"
+    )

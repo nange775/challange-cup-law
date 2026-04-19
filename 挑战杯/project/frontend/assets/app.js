@@ -41,11 +41,6 @@ const app = createApp({
         }
 
         // ==================== 数据导入 ====================
-        const importTab = ref('upload');
-        const uploadFiles = reactive({ trades: null, reg: null });
-        const uploading = ref(false);
-        const scanDir = ref('');
-        const scanning = ref(false);
 
         // ==================== 证据导入 ====================
         const evidenceFiles = ref([]);
@@ -85,49 +80,6 @@ const app = createApp({
             } else if (!hasTrades && hasRegInfo) {
                 ElementPlus.ElMessage.warning('检测到注册信息文件，还需导入对应的交易明细文件(TenpayTrades.xls)');
             }
-        }
-
-        async function doUpload() {
-            uploading.value = true;
-            try {
-                const form = new FormData();
-                form.append('trades', uploadFiles.trades);
-                form.append('reginfo', uploadFiles.reg);
-                const res = await axios.post(`${API}/upload`, form);
-                ElementPlus.ElMessage.success(`导入成功: ${res.data.name}(${res.data.user_id}), ${res.data.tx_count}笔交易`);
-                uploadFiles.trades = null;
-                uploadFiles.reg = null;
-                // 清除前端缓存
-                analysisCache.clear();
-                graphCache.clear();
-                await loadStats();
-            } catch (e) {
-                ElementPlus.ElMessage.error('导入失败: ' + (e.response?.data?.detail || e.message));
-            }
-            uploading.value = false;
-        }
-
-        async function doScan() {
-            if (!scanDir.value) return;
-            scanning.value = true;
-            try {
-                const res = await axios.post(`${API}/auto-import?directory=${encodeURIComponent(scanDir.value)}`);
-                const results = res.data;
-                let ok = 0, fail = 0;
-                results.forEach(r => {
-                    if (r.error) { fail++; ElementPlus.ElMessage.error(r.error); }
-                    else { ok++; ElementPlus.ElMessage.success(`导入: ${r.name}(${r.user_id}), ${r.tx_count}笔`); }
-                });
-                if (ok > 0) {
-                    // 清除前端缓存
-                    analysisCache.clear();
-                    graphCache.clear();
-                    await loadStats();
-                }
-            } catch (e) {
-                ElementPlus.ElMessage.error('扫描失败: ' + e.message);
-            }
-            scanning.value = false;
         }
 
         async function doClear() {
@@ -201,9 +153,14 @@ const app = createApp({
             evidenceResults.value = results;
             evidenceUploading.value = false;
 
-            // 清空文件列表
+            // 清空文件列表并刷新统计
             evidenceFiles.value = [];
             evidenceFileList.value = [];
+
+            // 清除前端缓存并重新加载统计
+            analysisCache.clear();
+            graphCache.clear();
+            await loadStats();
         }
 
         // ==================== 交易分析 ====================
@@ -589,6 +546,7 @@ const app = createApp({
             } catch (e) {
                 chatMessages.value.push({ role: 'assistant', content: '请求失败: ' + e.message });
             }
+
             chatLoading.value = false;
             await nextTick();
             if (chatBox.value) chatBox.value.scrollTop = chatBox.value.scrollHeight;
@@ -603,7 +561,7 @@ const app = createApp({
         return {
             currentPage, stats, persons, selectedUser, navItems, homeCards,
             // 导入
-            importTab, uploadFiles, uploading, doUpload, scanDir, scanning, doScan, doClear,
+            doClear,
             // 证据导入
             evidenceFiles, evidenceFileList, evidenceCaseId, evidenceType, evidenceDesc, evidenceUploading, evidenceResults, doEvidenceUpload,
             // 分析

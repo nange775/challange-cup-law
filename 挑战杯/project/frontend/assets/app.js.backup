@@ -110,8 +110,9 @@ const app = createApp({
         const hourData = ref([]);
         const chartMonthly = ref(null);
         const chartHour = ref(null);
+        const chartCounterpart = ref(null);
         const analysisLoading = ref(false);
-        const activeAnalysisTab = ref('monthly');
+        const activeAnalysisTab = ref('overview'); // 默认显示"交易概览"
         const analysisCache = new Map(); // 前端缓存
 
         const analysisSummary = computed(() => {
@@ -133,20 +134,24 @@ const app = createApp({
 
             // 检查缓存
             if (analysisCache.has(uid)) {
+                console.log('使用缓存数据:', uid);
                 const cached = analysisCache.get(uid);
                 analysisData.value = cached.tx;
                 anomalyData.value = cached.anomaly;
                 counterparts.value = cached.counterparts;
                 monthlyData.value = cached.monthly;
                 hourData.value = cached.hour;
+                // 等待DOM更新后渲染所有图表
                 await nextTick();
-                renderMonthlyChart();
-                if (activeAnalysisTab.value === 'hour') {
+                setTimeout(() => {
+                    renderMonthlyChart();
                     renderHourChart();
-                }
+                    renderCounterpartChart();
+                }, 100);
                 return;
             }
 
+            console.log('加载新数据:', uid);
             analysisLoading.value = true;
             try {
                 const [txRes, anomRes, cpRes, monthRes, hourRes] = await Promise.all([
@@ -156,6 +161,13 @@ const app = createApp({
                     axios.get(`${API}/monthly/${uid}`),
                     axios.get(`${API}/hour-distribution/${uid}`),
                 ]);
+
+                console.log('数据加载完成:', {
+                    tx: txRes.data.length,
+                    monthly: monthRes.data.length,
+                    hour: hourRes.data.length
+                });
+
                 analysisData.value = txRes.data;
                 anomalyData.value = anomRes.data;
                 counterparts.value = cpRes.data;
@@ -171,75 +183,158 @@ const app = createApp({
                     hour: hourRes.data,
                 });
 
+                // 等待DOM更新后渲染所有图表（都在"交易概览"标签内）
                 await nextTick();
-                renderMonthlyChart();
-                // 时段分布只在激活时渲染
-                if (activeAnalysisTab.value === 'hour') {
+                setTimeout(() => {
+                    renderMonthlyChart();
                     renderHourChart();
-                }
+                    renderCounterpartChart();
+                }, 100);
             } catch (e) {
+                console.error('加载失败:', e);
                 ElementPlus.ElMessage.error('分析失败: ' + e.message);
-                console.error(e);
             }
             analysisLoading.value = false;
         }
 
         function onAnalysisTabChange(tabName) {
             activeAnalysisTab.value = tabName;
-            nextTick(() => {
-                if (tabName === 'monthly') renderMonthlyChart();
-                if (tabName === 'hour') renderHourChart();
-            });
+            // 切换到"交易概览"时渲染所有图表
+            if (tabName === 'overview') {
+                nextTick(() => {
+                    setTimeout(() => {
+                        renderMonthlyChart();
+                        renderHourChart();
+                        renderCounterpartChart();
+                    }, 50);
+                });
+            }
         }
 
         function renderMonthlyChart() {
             if (!chartMonthly.value || !monthlyData.value.length) return;
-            let chart = echarts.getInstanceByDom(chartMonthly.value);
-            if (!chart) chart = echarts.init(chartMonthly.value);
-            const months = monthlyData.value.map(d => d.month);
-            chart.setOption({
-                tooltip: { trigger: 'axis' },
-                legend: { data: ['入账', '出账'] },
-                xAxis: { type: 'category', data: months, axisLabel: { rotate: 45 } },
-                yAxis: { type: 'value', name: '金额(元)' },
-                series: [
-                    { name: '入账', type: 'bar', data: monthlyData.value.map(d => d.income), itemStyle: { color: '#67c23a' } },
-                    { name: '出账', type: 'bar', data: monthlyData.value.map(d => d.expense), itemStyle: { color: '#f56c6c' } },
-                ],
-                grid: { bottom: 80 },
-                animation: true, // 启用动画
-                animationDuration: 800, // 动画时长
-            });
-            chart.resize(); // 确保图表大小正确
+
+            // 等待容器渲染完成
+            setTimeout(() => {
+                if (!chartMonthly.value) return;
+
+                let chart = echarts.getInstanceByDom(chartMonthly.value);
+                if (!chart) chart = echarts.init(chartMonthly.value);
+
+                const months = monthlyData.value.map(d => d.month);
+                chart.setOption({
+                    tooltip: { trigger: 'axis' },
+                    legend: { data: ['入账', '出账'] },
+                    xAxis: { type: 'category', data: months, axisLabel: { rotate: 45 } },
+                    yAxis: { type: 'value', name: '金额(元)' },
+                    series: [
+                        { name: '入账', type: 'bar', data: monthlyData.value.map(d => d.income), itemStyle: { color: '#67c23a' } },
+                        { name: '出账', type: 'bar', data: monthlyData.value.map(d => d.expense), itemStyle: { color: '#f56c6c' } },
+                    ],
+                    grid: { bottom: 80 },
+                    animation: true,
+                    animationDuration: 800,
+                });
+
+                // 强制调整大小
+                chart.resize();
+                console.log('月度图表已渲染');
+            }, 100);
         }
 
         function renderHourChart() {
             if (!chartHour.value || !hourData.value.length) return;
-            let chart = echarts.getInstanceByDom(chartHour.value);
-            if (!chart) chart = echarts.init(chartHour.value);
-            chart.setOption({
-                tooltip: { trigger: 'axis' },
-                xAxis: { type: 'category', data: hourData.value.map(d => d.hour + '时'), name: '时段' },
-                yAxis: { type: 'value', name: '交易笔数' },
-                series: [{
-                    type: 'bar',
-                    data: hourData.value.map(d => ({
-                        value: d.count,
-                        itemStyle: { color: d.hour >= 0 && d.hour < 6 ? '#f56c6c' : '#409eff' }
-                    })),
-                }],
-                animation: true, // 启用动画
-                animationDuration: 800, // 动画时长
-                markArea: {
-                    silent: true,
-                    data: [[
-                        { xAxis: '0时', itemStyle: { color: 'rgba(245, 108, 108, 0.1)' } },
-                        { xAxis: '5时' }
-                    ]],
-                    label: { show: true, position: 'top', formatter: '深夜时段' }
-                }
-            });
-            chart.resize(); // 确保图表大小正确
+
+            // 等待容器渲染完成
+            setTimeout(() => {
+                if (!chartHour.value) return;
+
+                let chart = echarts.getInstanceByDom(chartHour.value);
+                if (!chart) chart = echarts.init(chartHour.value);
+
+                chart.setOption({
+                    tooltip: { trigger: 'axis' },
+                    xAxis: { type: 'category', data: hourData.value.map(d => d.hour + '时'), name: '时段' },
+                    yAxis: { type: 'value', name: '交易笔数' },
+                    series: [{
+                        type: 'bar',
+                        data: hourData.value.map(d => ({
+                            value: d.count,
+                            itemStyle: { color: d.hour >= 0 && d.hour < 6 ? '#f56c6c' : '#409eff' }
+                        })),
+                    }],
+                    animation: true,
+                    animationDuration: 800,
+                    markArea: {
+                        silent: true,
+                        data: [[
+                            { xAxis: '0时', itemStyle: { color: 'rgba(245, 108, 108, 0.1)' } },
+                            { xAxis: '5时' }
+                        ]],
+                        label: { show: true, position: 'top', formatter: '深夜时段' }
+                    }
+                });
+
+                // 强制调整大小
+                chart.resize();
+                console.log('时段图表已渲染');
+            }, 100);
+        }
+
+        function renderCounterpartChart() {
+            if (!chartCounterpart.value || !counterparts.value.length) return;
+
+            // 等待容器渲染完成
+            setTimeout(() => {
+                if (!chartCounterpart.value) return;
+
+                let chart = echarts.getInstanceByDom(chartCounterpart.value);
+                if (!chart) chart = echarts.init(chartCounterpart.value);
+
+                const top10 = counterparts.value.slice(0, 10);
+                const names = top10.map(d => d.counterpart_name);
+                const incomeData = top10.map(d => d.total_in_yuan || 0);
+                const expenseData = top10.map(d => d.total_out_yuan || 0);
+
+                chart.setOption({
+                    tooltip: {
+                        trigger: 'axis',
+                        axisPointer: { type: 'shadow' }
+                    },
+                    legend: { data: ['入账', '出账'] },
+                    xAxis: {
+                        type: 'category',
+                        data: names,
+                        axisLabel: {
+                            rotate: 45,
+                            interval: 0,
+                            fontSize: 11
+                        }
+                    },
+                    yAxis: { type: 'value', name: '金额(元)' },
+                    series: [
+                        {
+                            name: '入账',
+                            type: 'bar',
+                            data: incomeData,
+                            itemStyle: { color: '#67c23a' }
+                        },
+                        {
+                            name: '出账',
+                            type: 'bar',
+                            data: expenseData,
+                            itemStyle: { color: '#f56c6c' }
+                        },
+                    ],
+                    grid: { bottom: 100, left: 60, right: 40 },
+                    animation: true,
+                    animationDuration: 800,
+                });
+
+                // 强制调整大小
+                chart.resize();
+                console.log('对手方图表已渲染');
+            }, 100);
         }
 
         // ==================== 关系图谱 ====================
@@ -377,19 +472,107 @@ const app = createApp({
 
             try {
                 const apiMessages = [...chatHistory.value, { role: 'user', content: msg }];
-                const res = await axios.post(`${API}/chat`, {
-                    messages: apiMessages,
-                    provider_id: agentConfig.provider,
-                    api_key: agentConfig.apiKey,
-                    model: agentConfig.model,
-                    base_url: agentConfig.baseUrl,
+
+                // 使用流式API
+                const response = await fetch(`${API}/chat/stream`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        messages: apiMessages,
+                        provider_id: agentConfig.provider,
+                        api_key: agentConfig.apiKey,
+                        model: agentConfig.model,
+                        base_url: agentConfig.baseUrl,
+                    })
                 });
-                const reply = res.data.reply;
-                chatMessages.value.push({ role: 'assistant', content: reply });
-                chatHistory.value = res.data.history || apiMessages.concat([{ role: 'assistant', content: reply }]);
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+
+                // 创建消息占位符
+                const assistantMsgIndex = chatMessages.value.length;
+                chatMessages.value.push({ role: 'assistant', content: '' });
+
+                // 读取流式响应
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop() || ''; // 保留不完整的行
+
+                    for (const line of lines) {
+                        if (!line.trim() || !line.startsWith('data: ')) continue;
+
+                        const jsonStr = line.slice(6); // 去掉 "data: " 前缀
+                        try {
+                            const chunk = JSON.parse(jsonStr);
+
+                            if (chunk.type === 'text') {
+                                // 强制触发响应式更新：重新赋值整个数组
+                                const newMsg = {
+                                    role: 'assistant',
+                                    content: chatMessages.value[assistantMsgIndex].content + chunk.content
+                                };
+                                chatMessages.value = [
+                                    ...chatMessages.value.slice(0, assistantMsgIndex),
+                                    newMsg,
+                                    ...chatMessages.value.slice(assistantMsgIndex + 1)
+                                ];
+                                console.log('[流式接收]', chunk.content);
+                                await nextTick();
+                                if (chatBox.value) chatBox.value.scrollTop = chatBox.value.scrollHeight;
+                            } else if (chunk.type === 'tool') {
+                                const newMsg = {
+                                    role: 'assistant',
+                                    content: chatMessages.value[assistantMsgIndex].content + chunk.content
+                                };
+                                chatMessages.value = [
+                                    ...chatMessages.value.slice(0, assistantMsgIndex),
+                                    newMsg,
+                                    ...chatMessages.value.slice(assistantMsgIndex + 1)
+                                ];
+                                await nextTick();
+                                if (chatBox.value) chatBox.value.scrollTop = chatBox.value.scrollHeight;
+                            } else if (chunk.type === 'done') {
+                                chatHistory.value = chunk.messages || apiMessages.concat([chatMessages.value[assistantMsgIndex]]);
+                            } else if (chunk.type === 'error') {
+                                const newMsg = {
+                                    role: 'assistant',
+                                    content: chatMessages.value[assistantMsgIndex].content + '\n\n❌ 错误: ' + chunk.content
+                                };
+                                chatMessages.value = [
+                                    ...chatMessages.value.slice(0, assistantMsgIndex),
+                                    newMsg,
+                                    ...chatMessages.value.slice(assistantMsgIndex + 1)
+                                ];
+                            }
+                        } catch (parseErr) {
+                            console.warn('解析SSE数据失败:', jsonStr, parseErr);
+                        }
+                    }
+                }
+
+                // 如果没有收到任何内容
+                if (!chatMessages.value[assistantMsgIndex].content) {
+                    chatMessages.value[assistantMsgIndex] = {
+                        role: 'assistant',
+                        content: '未收到响应'
+                    };
+                }
+
             } catch (e) {
                 chatMessages.value.push({ role: 'assistant', content: '请求失败: ' + e.message });
             }
+
             chatLoading.value = false;
             await nextTick();
             if (chatBox.value) chatBox.value.scrollTop = chatBox.value.scrollHeight;
@@ -408,7 +591,7 @@ const app = createApp({
             // 分析
             analysisData, anomalyData, counterparts, analysisSummary,
             analysisLoading, activeAnalysisTab,
-            loadAnalysis, chartMonthly, chartHour, onAnalysisTabChange,
+            loadAnalysis, chartMonthly, chartHour, chartCounterpart, onAnalysisTabChange,
             // 图谱
             graphData, graphLoading, graphIframeSrc, loadGraph,
             // 画像
