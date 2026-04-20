@@ -20,7 +20,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 from src.database import (
     init_db, get_db_stats, get_all_persons, get_persons_with_transactions,
     get_person_transactions, clear_db, get_counterpart_summary, get_bank_cards,
-    get_all_cases, create_case, get_case_info, get_case_evidences, get_person_evidences
+    get_all_cases, create_case, get_case_info, get_case_evidences, get_person_evidences,
+    get_conn
 )
 from src.ingest import ingest_tenpay_data, auto_discover_and_ingest
 from src.anomaly import run_all_detections, get_risk_summary
@@ -98,23 +99,62 @@ def _df_to_records(df: pd.DataFrame) -> list:
 # ==================== 数据导入 ====================
 
 @app.get("/api/stats")
-def api_stats():
-    """数据库统计"""
-    return get_db_stats()
+def api_stats(case_id: Optional[str] = Query(None)):
+    """数据库统计（支持按案件过滤，带缓存）"""
+    cache_key = _cache_key("stats", case_id or "all")
+    cached = _get_cache(cache_key)
+    if cached is not None:
+        return cached
+
+    if case_id:
+        # 返回指定案件的统计
+        conn = get_conn()
+        stats = {
+            "person_count": conn.execute("SELECT COUNT(*) FROM persons WHERE case_id = ?", [case_id]).fetchone()[0],
+            "card_count": conn.execute("SELECT COUNT(*) FROM bank_cards WHERE user_id IN (SELECT user_id FROM persons WHERE case_id = ?)", [case_id]).fetchone()[0],
+            "tx_count": conn.execute("SELECT COUNT(*) FROM transactions WHERE case_id = ?", [case_id]).fetchone()[0],
+            "case_count": 1,
+            "evidence_count": conn.execute("SELECT COUNT(*) FROM evidence_meta WHERE case_id = ?", [case_id]).fetchone()[0],
+        }
+        conn.close()
+    else:
+        # 返回全部统计
+        stats = get_db_stats()
+
+    _set_cache(cache_key, stats)
+    return stats
 
 
 @app.get("/api/persons")
-def api_persons(with_transactions: bool = True, exclude_companies: bool = True):
+def api_persons(
+    case_id: Optional[str] = Query(None),
+    with_transactions: bool = True,
+    exclude_companies: bool = True
+):
     """
-    人员列表
+    人员列表（支持按案件过滤，带缓存）
+    case_id: 案件ID（可选）
     with_transactions: 是否只返回有交易记录的人员（默认true）
     exclude_companies: 是否排除企业（默认true）
     """
+    # 缓存键包含所有参数
+    cache_key = _cache_key("persons", case_id or "all", with_transactions, exclude_companies)
+    cached = _get_cache(cache_key)
+    if cached is not None:
+        return cached
+
     if with_transactions:
         df = get_persons_with_transactions(exclude_companies=exclude_companies)
     else:
         df = get_all_persons()
-    return _df_to_records(df)
+
+    # 按案件过滤
+    if case_id and not df.empty:
+        df = df[df['case_id'] == case_id]
+
+    result = _df_to_records(df)
+    _set_cache(cache_key, result)
+    return result
 
 
 @app.post("/api/evidence/import")
@@ -196,9 +236,17 @@ def api_create_case(case_id: str = Query(...), case_name: str = Query(...)):
 
 @app.get("/api/cases")
 def api_list_cases():
-    """获取所有案件列表"""
+    """获取所有案件列表（优化版）"""
+    cache_key = _cache_key("cases_list")
+    cached = _get_cache(cache_key)
+    if cached is not None:
+        return cached
+
     df = get_all_cases()
-    return _df_to_records(df)
+    result = _df_to_records(df)
+
+    _set_cache(cache_key, result)
+    return result
 
 
 @app.get("/api/cases/{case_id}")
