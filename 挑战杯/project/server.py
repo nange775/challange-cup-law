@@ -25,7 +25,11 @@ from src.database import (
 )
 from src.ingest import ingest_tenpay_data, auto_discover_and_ingest
 from src.anomaly import run_all_detections, get_risk_summary
-from src.graph_analysis import build_transaction_graph, get_network_metrics, find_bridge_accounts, find_fund_cycles, get_top_counterparts, generate_pyvis_html
+from src.graph_analysis import (
+    build_transaction_graph, get_network_metrics, find_bridge_accounts,
+    find_fund_cycles, get_top_counterparts, generate_pyvis_html,
+    analyze_pair_relationship
+)
 from src.profiler import generate_profile, generate_report_text
 from src.agent import chat_with_agent, chat_with_agent_stream, _resolve_user_id
 from src.evidence_import import import_evidence
@@ -39,6 +43,27 @@ init_db()
 # 简单的内存缓存（生产环境建议使用 Redis）
 _cache = {}
 _cache_ttl = 300  # 缓存5分钟
+ 
+ 
+# 临时占位函数，实际路由在后文注册
+def api_relationship(user_a: str = Query(...), user_b: str = Query(...)):
+    """分析两个节点之间的关系。"""
+    uid_a = _resolve_user_id(user_a)
+    uid_b = _resolve_user_id(user_b)
+    if uid_a == uid_b:
+        raise HTTPException(status_code=400, detail="请选择两个不同的节点")
+
+    cache_key = _cache_key("relationship", uid_a, uid_b)
+    cached = _get_cache(cache_key)
+    if cached is not None:
+        return cached
+
+    try:
+        result = _clean_for_json(analyze_pair_relationship(uid_a, uid_b))
+        _set_cache(cache_key, result)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 def _cache_key(*args) -> str:
@@ -72,6 +97,7 @@ def clear_cache():
 app = FastAPI(title="检察侦查画像系统 API", version="1.0.0")
 
 # CORS - 允许前端跨域
+app.get("/api/relationship")(api_relationship)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
