@@ -4,10 +4,13 @@ const API = '/api';
 const app = createApp({
     setup() {
         // ==================== 全局状态 ====================
+        const isLoading = ref(true);  // 全局加载状态
         const currentPage = ref('home');
+        const currentCaseId = ref('');  // 当前选中的案件ID
         const stats = ref({});
         const persons = ref([]);
         const selectedUser = ref('');
+        const cases = ref([]);  // 案件列表
 
         const navItems = [
             { page: 'home', icon: '\u{1F3E0}', label: '首页' },
@@ -29,15 +32,65 @@ const app = createApp({
         ];
 
         // ==================== 数据加载 ====================
+        let isInitialLoad = true;  // 首次加载标志
+
         async function loadStats() {
             try {
-                const [s, p] = await Promise.all([
-                    axios.get(`${API}/stats`),
-                    axios.get(`${API}/persons`),
-                ]);
+                // 只加载案件列表，延迟加载其他数据
+                const res = await axios.get(`${API}/cases`);
+                cases.value = res.data;
+
+                // 如果有案件但未选中，自动选中第一个
+                if (cases.value.length > 0 && !currentCaseId.value) {
+                    currentCaseId.value = cases.value[0].case_id;
+
+                    // 首次加载时延迟加载案件数据，避免阻塞页面渲染
+                    if (isInitialLoad) {
+                        isInitialLoad = false;
+                        setTimeout(() => loadCaseData(), 100);
+                    } else {
+                        await loadCaseData();
+                    }
+                } else if (currentCaseId.value) {
+                    await loadCaseData();
+                }
+            } catch (e) {
+                console.error('加载案件列表失败:', e);
+            }
+        }
+
+        async function loadCaseData() {
+            if (!currentCaseId.value) {
+                stats.value = {};
+                persons.value = [];
+                return;
+            }
+
+            try {
+                // 先快速加载统计，再加载人员列表
+                const statsPromise = axios.get(`${API}/stats?case_id=${currentCaseId.value}`);
+
+                // 统计数据优先显示
+                const s = await statsPromise;
                 stats.value = s.data;
+
+                // 人员列表可以稍后加载
+                const p = await axios.get(`${API}/persons?case_id=${currentCaseId.value}`);
                 persons.value = p.data;
-            } catch (e) { console.error(e); }
+            } catch (e) {
+                console.error('加载案件数据失败:', e);
+            }
+        }
+
+        function onCaseChange() {
+            // 切换案件时重新加载数据并清除缓存
+            loadCaseData();
+            analysisCache.clear();
+            graphCache.clear();
+            selectedUser.value = '';
+            analysisData.value = null;
+            graphData.value = null;
+            profileData.value = null;
         }
 
         // ==================== 数据导入 ====================
@@ -45,11 +98,16 @@ const app = createApp({
         // ==================== 证据导入 ====================
         const evidenceFiles = ref([]);
         const evidenceFileList = ref([]);
-        const evidenceCaseId = ref('');
         const evidenceType = ref('auto');
         const evidenceDesc = ref('');
         const evidenceUploading = ref(false);
         const evidenceResults = ref([]);
+
+        // 新建案件
+        const showCreateCaseDialog = ref(false);
+        const newCaseId = ref('');
+        const newCaseName = ref('');
+        const creatingCase = ref(false);
 
         // 财付通文件配对验证状态
         const tenpayValidation = reactive({
@@ -95,7 +153,40 @@ const app = createApp({
             }
         }
 
+        async function doCreateCase() {
+            if (!newCaseId.value || !newCaseName.value) {
+                ElementPlus.ElMessage.warning('请填写完整案件信息');
+                return;
+            }
+
+            creatingCase.value = true;
+            try {
+                const res = await axios.post(`${API}/cases?case_id=${encodeURIComponent(newCaseId.value)}&case_name=${encodeURIComponent(newCaseName.value)}`);
+                if (res.data.success) {
+                    ElementPlus.ElMessage.success('案件创建成功');
+                    // 刷新案件列表
+                    await loadStats();
+                    // 自动选中新建的案件
+                    currentCaseId.value = newCaseId.value;
+                    // 关闭对话框
+                    showCreateCaseDialog.value = false;
+                    newCaseId.value = '';
+                    newCaseName.value = '';
+                } else {
+                    ElementPlus.ElMessage.error(res.data.error || '创建失败');
+                }
+            } catch (e) {
+                ElementPlus.ElMessage.error('创建失败: ' + (e.response?.data?.detail || e.message));
+            }
+            creatingCase.value = false;
+        }
+
         async function doEvidenceUpload() {
+            if (!currentCaseId.value) {
+                ElementPlus.ElMessage.warning('请先选择或创建案件');
+                return;
+            }
+
             if (evidenceFiles.value.length === 0) {
                 ElementPlus.ElMessage.warning('请选择要导入的文件');
                 return;
@@ -127,7 +218,7 @@ const app = createApp({
             for (const file of evidenceFiles.value) {
                 const formData = new FormData();
                 formData.append('file', file);
-                formData.append('case_id', evidenceCaseId.value || 'AUTO-' + Date.now());
+                formData.append('case_id', currentCaseId.value);
                 formData.append('evidence_type', evidenceType.value === 'auto' ? '' : evidenceType.value);
                 formData.append('description', evidenceDesc.value || '自动导入');
 
@@ -157,10 +248,10 @@ const app = createApp({
             evidenceFiles.value = [];
             evidenceFileList.value = [];
 
-            // 清除前端缓存并重新加载统计
+            // 清除前端缓存并重新加载当前案件数据
             analysisCache.clear();
             graphCache.clear();
-            await loadStats();
+            await loadCaseData();
         }
 
         // ==================== 交易分析 ====================
@@ -553,17 +644,32 @@ const app = createApp({
         }
 
         // ==================== 初始化 ====================
-        onMounted(() => {
-            loadStats();
-            loadProviders();
+        onMounted(async () => {
+            try {
+                // 快速加载核心数据
+                await loadStats();
+
+                // 延迟加载AI提供商列表
+                setTimeout(() => loadProviders(), 500);
+            } catch (e) {
+                console.error('初始化失败:', e);
+            } finally {
+                // 最短显示300ms加载动画
+                setTimeout(() => {
+                    isLoading.value = false;
+                }, 300);
+            }
         });
 
         return {
-            currentPage, stats, persons, selectedUser, navItems, homeCards,
+            isLoading, currentPage, stats, persons, selectedUser, navItems, homeCards,
+            // 案件管理
+            currentCaseId, cases, onCaseChange,
+            showCreateCaseDialog, newCaseId, newCaseName, creatingCase, doCreateCase,
             // 导入
             doClear,
             // 证据导入
-            evidenceFiles, evidenceFileList, evidenceCaseId, evidenceType, evidenceDesc, evidenceUploading, evidenceResults, doEvidenceUpload,
+            evidenceFiles, evidenceFileList, evidenceType, evidenceDesc, evidenceUploading, evidenceResults, doEvidenceUpload,
             // 分析
             analysisData, anomalyData, counterparts, analysisSummary,
             analysisLoading, activeAnalysisTab,

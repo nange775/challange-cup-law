@@ -114,7 +114,14 @@ def ai_classify_evidence(content: str = None, df: pd.DataFrame = None) -> dict:
         # 简单判断表格类型
         columns_str = '|'.join([str(c).lower() for c in df.columns])
 
-        if any(k in columns_str for k in ['金额', '交易', '余额', 'amount', '收支']):
+        # 🔑 检测财付通格式 (27列，包含特征字段)
+        tenpay_keywords = ['交易单号', '财付通', '用户id', '交易时间', '交易金额(分)', 'tenpay']
+        tenpay_matches = sum(1 for kw in tenpay_keywords if kw in columns_str)
+
+        if tenpay_matches >= 2 or len(df.columns) == 27:  # 财付通特征
+            result['evidence_type'] = '流水'
+            result['title'] = '财付通交易流水'
+        elif any(k in columns_str for k in ['金额', '交易', '余额', 'amount', '收支']):
             result['evidence_type'] = '流水'
             result['title'] = '资金流水记录'
         elif any(k in columns_str for k in ['主叫', '被叫', '通话', 'caller', 'callee']):
@@ -322,16 +329,116 @@ def _import_financial_records(evidence_id: str, case_id: str, df: pd.DataFrame):
 
     conn = get_conn()
 
-    # 字段映射（根据实际列名灵活匹配）
-    column_mapping = _smart_column_mapping(df.columns, {
-        'user_id': ['账号', '用户id', 'userid', 'user_id', '用户账号'],
-        'user_name': ['姓名', '用户名', 'name', '账户名'],
-        'trade_time': ['交易时间', '时间', 'time', 'date', '日期'],
-        'amount': ['金额', '交易金额', 'amount', '数额'],
-        'counterpart_name': ['对方', '交易对方', '对手方', 'counterpart'],
-        'direction': ['收支', '方向', 'direction', '类型'],
-        'purpose': ['用途', '备注', 'purpose', 'remark'],
-    })
+    # 🔑 检测是否为财付通格式（27列）
+    is_tenpay = len(df.columns) == 27
+
+    if is_tenpay:
+        # 财付通格式：使用固定列索引
+        from src.ingest import TRADE_COLS, parse_trades_xls, parse_reginfo_xls
+
+        # 统一列名
+        df.columns = TRADE_COLS
+
+        # 调用财付通专用导入逻辑
+        _import_tenpay_transactions(evidence_id, case_id, df, conn)
+    else:
+        # 通用流水格式：智能列名映射
+        column_mapping = _smart_column_mapping(df.columns, {
+            'user_id': ['账号', '用户id', 'userid', 'user_id', '用户账号'],
+            'user_name': ['姓名', '用户名', 'name', '账户名'],
+            'trade_time': ['交易时间', '时间', 'time', 'date', '日期'],
+            'amount': ['金额', '交易金额', 'amount', '数额'],
+            'counterpart_name': ['对方', '交易对方', '对手方', 'counterpart'],
+            'direction': ['收支', '方向', 'direction', '类型'],
+            'purpose': ['用途', '备注', 'purpose', 'remark'],
+        })
+        _import_generic_transactions(evidence_id, case_id, df, column_mapping, conn)
+
+    conn.close()
+
+
+def _import_tenpay_transactions(evidence_id: str, case_id: str, df: pd.DataFrame, conn):
+    """导入财付通交易数据（复用ingest.py逻辑）"""
+    # 清洗数据
+    df["user_id"] = df["user_id"].ffill()
+    df["user_account_name"] = df["user_account_name"].ffill()
+    df = df.dropna(subset=["user_id"])
+    df["trade_time"] = pd.to_datetime(df["trade_time"], errors="coerce")
+    df = df.dropna(subset=["trade_time"])
+    df["amount"] = pd.to_numeric(df["amount"], errors="coerce").fillna(0).astype(int).abs()
+    df["balance"] = pd.to_numeric(df["balance"], errors="coerce").fillna(0).astype(int)
+    df["direction"] = df["direction"].astype(str).str.strip()
+
+    # 清洗对手方信息
+    import re
+    def _clean_counterpart_id(raw: str) -> str:
+        if pd.isna(raw) or raw == "":
+            return ""
+        s = str(raw)
+        m = re.search(r'\(([^)]+)\)$', s)
+        if m:
+            return m.group(1)
+        return s
+
+    def _clean_counterpart_name(raw_name, raw_id) -> str:
+        if pd.notna(raw_name) and str(raw_name).strip():
+            return str(raw_name).strip()
+        if pd.isna(raw_id):
+            return ""
+        s = str(raw_id)
+        m = re.match(r'^(.+?)\(', s)
+        if m:
+            return m.group(1)
+        return ""
+
+    df["counterpart_name_clean"] = df.apply(
+        lambda r: _clean_counterpart_name(r["counterpart_account"], r["counterpart_id"]),
+        axis=1
+    )
+    df["counterpart_id_clean"] = df["counterpart_id"].apply(_clean_counterpart_id)
+
+    # 自动创建用户
+    for user_id in df["user_id"].unique():
+        user_row = df[df["user_id"] == user_id].iloc[0]
+        user_name = str(user_row["user_account_name"])
+
+        exists = conn.execute("SELECT 1 FROM persons WHERE user_id = ?", [user_id]).fetchone()
+        if not exists:
+            conn.execute("""
+                INSERT INTO persons (user_id, case_id, name, role)
+                VALUES (?, ?, ?, ?)
+            """, [user_id, case_id, user_name, '涉案人'])
+
+    conn.commit()
+
+    # 插入交易记录
+    for _, row in df.iterrows():
+        conn.execute("""
+            INSERT INTO transactions
+            (case_id, evidence_id, trade_no, big_trade_no, user_id, user_name, direction,
+             biz_type, purpose, trade_time, amount, balance, user_card,
+             counterpart_id, counterpart_name, counterpart_card, counterpart_bank,
+             remark, source_type)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, [
+            case_id, evidence_id,
+            str(row["trade_no"]), str(row["big_trade_no"]),
+            str(row["user_id"]), str(row["user_account_name"]),
+            str(row["direction"]), str(row["biz_type"]), str(row["purpose"]),
+            str(row["trade_time"]), int(row["amount"]), int(row["balance"]),
+            str(row["user_card"]) if pd.notna(row["user_card"]) else None,
+            row["counterpart_id_clean"], row["counterpart_name_clean"],
+            str(row["counterpart_card"]) if pd.notna(row["counterpart_card"]) else None,
+            str(row["counterpart_bank"]) if pd.notna(row["counterpart_bank"]) else None,
+            str(row.get("remark1", "")) if pd.notna(row.get("remark1")) else None,
+            '财付通'
+        ])
+
+    conn.commit()
+
+
+def _import_generic_transactions(evidence_id: str, case_id: str, df: pd.DataFrame, column_mapping: dict, conn):
+    """导入通用格式交易数据"""
 
     # 自动创建不存在的人员
     user_ids_in_data = set()
@@ -386,7 +493,6 @@ def _import_financial_records(evidence_id: str, case_id: str, df: pd.DataFrame):
         ])
 
     conn.commit()
-    conn.close()
 
 
 def _import_chat_records(evidence_id: str, data):
