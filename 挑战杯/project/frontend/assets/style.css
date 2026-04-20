@@ -211,6 +211,9 @@ h2 { font-size: 22px; }
     border-radius: 8px;
     background: #fff;
 }
+.relation-iframe {
+    height: 560px;
+}
 .two-col {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -221,6 +224,21 @@ h2 { font-size: 22px; }
     line-height: 2;
 }
 .bridge-item .el-tag { margin-right: 8px; }
+.path-box {
+    padding: 16px;
+    border: 1px solid #e4e7ed;
+    border-radius: 8px;
+    background: #fafafa;
+}
+.path-line {
+    font-size: 15px;
+    line-height: 1.8;
+    color: #303133;
+    word-break: break-word;
+}
+.relation-summary-text {
+    max-height: none;
+}
 
 /* ==================== 画像报告 ==================== */
 .report-text {

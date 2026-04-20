@@ -100,6 +100,7 @@ const app = createApp({
                 // 清除前端缓存
                 analysisCache.clear();
                 graphCache.clear();
+                relationCache.clear();
                 await loadStats();
             } catch (e) {
                 ElementPlus.ElMessage.error('导入失败: ' + (e.response?.data?.detail || e.message));
@@ -122,6 +123,7 @@ const app = createApp({
                     // 清除前端缓存
                     analysisCache.clear();
                     graphCache.clear();
+                    relationCache.clear();
                     await loadStats();
                 }
             } catch (e) {
@@ -137,6 +139,7 @@ const app = createApp({
                 // 清除前端缓存
                 analysisCache.clear();
                 graphCache.clear();
+                relationCache.clear();
                 await loadStats();
             } catch (e) {
                 ElementPlus.ElMessage.error('清空失败: ' + e.message);
@@ -445,6 +448,11 @@ const app = createApp({
         const graphData = ref(null);
         const graphLoading = ref(false);
         const graphIframeSrc = ref('');
+        const relationTargetUser = ref('');
+        const relationshipData = ref(null);
+        const relationshipLoading = ref(false);
+        const relationshipIframeSrc = ref('');
+        const relationCache = new Map();
         const graphCache = new Map(); // 图谱缓存
 
         // 将 HTML 字符串转为 Blob URL 供 iframe 加载，避免 srcdoc CSP 限制
@@ -459,6 +467,18 @@ const app = createApp({
             }
             const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
             graphIframeSrc.value = URL.createObjectURL(blob);
+        }
+
+        function setRelationshipIframe(html) {
+            if (relationshipIframeSrc.value && relationshipIframeSrc.value.startsWith('blob:')) {
+                URL.revokeObjectURL(relationshipIframeSrc.value);
+            }
+            if (!html) {
+                relationshipIframeSrc.value = '';
+                return;
+            }
+            const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+            relationshipIframeSrc.value = URL.createObjectURL(blob);
         }
 
         async function loadGraph() {
@@ -495,6 +515,45 @@ const app = createApp({
                 console.error(e);
             }
             graphLoading.value = false;
+        }
+
+        async function analyzeRelationship() {
+            if (!selectedUser.value || !relationTargetUser.value) {
+                ElementPlus.ElMessage.warning('请选择两个待分析的节点');
+                return;
+            }
+            if (selectedUser.value === relationTargetUser.value) {
+                ElementPlus.ElMessage.warning('请选择两个不同的节点');
+                return;
+            }
+
+            const cacheKey = [selectedUser.value, relationTargetUser.value].sort().join('__');
+            if (relationCache.has(cacheKey)) {
+                relationshipData.value = relationCache.get(cacheKey);
+                await nextTick();
+                setRelationshipIframe(relationshipData.value.relationship_graph_html || '');
+                return;
+            }
+
+            relationshipLoading.value = true;
+            relationshipData.value = null;
+            relationshipIframeSrc.value = '';
+            try {
+                const res = await axios.get(`${API}/relationship`, {
+                    params: {
+                        user_a: selectedUser.value,
+                        user_b: relationTargetUser.value,
+                    },
+                });
+                relationshipData.value = res.data;
+                relationCache.set(cacheKey, res.data);
+                await nextTick();
+                setRelationshipIframe(res.data.relationship_graph_html || '');
+            } catch (e) {
+                ElementPlus.ElMessage.error('双节点关系分析失败: ' + (e.response?.data?.detail || e.message));
+                console.error(e);
+            }
+            relationshipLoading.value = false;
         }
 
         // ==================== 人员画像 ====================
@@ -612,6 +671,7 @@ const app = createApp({
             loadAnalysis, chartMonthly, chartHour, chartCounterpart, onAnalysisTabChange,
             // 图谱
             graphData, graphLoading, graphIframeSrc, loadGraph,
+            relationTargetUser, relationshipData, relationshipLoading, relationshipIframeSrc, analyzeRelationship,
             // 画像
             profileData, profileLoading, profileExpanded, loadProfile, downloadReport,
             // Agent

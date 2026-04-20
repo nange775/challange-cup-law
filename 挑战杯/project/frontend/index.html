@@ -243,7 +243,7 @@
                 <div v-if="currentPage==='analysis'" class="page">
                     <div class="page-header">
                         <h2>交易分析与异常检测</h2>
-                        <div style="display:flex;gap:10px;align-items:center">
+                        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
                             <el-select v-model="selectedUser" placeholder="选择分析对象" style="width:250px">
                                 <el-option v-for="p in persons" :key="p.user_id" :label="p.name+'('+p.user_id+')'" :value="p.user_id"/>
                             </el-select>
@@ -345,6 +345,58 @@
                             </div>
                             <iframe v-if="graphIframeSrc" :src="graphIframeSrc" class="graph-iframe" sandbox="allow-scripts"></iframe>
                             <div v-else class="empty-hint">无图谱数据</div>
+                        </div>
+                        <div class="section-card" style="margin-top:16px">
+                            <div class="section-title">双节点关系分析</div>
+                            <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:16px">
+                                <el-select v-model="relationTargetUser" placeholder="选择关系对象" style="width:250px">
+                                    <el-option v-for="p in persons.filter(item => item.user_id !== selectedUser)" :key="'relation_'+p.user_id" :label="p.name+'('+p.user_id+')'" :value="p.user_id"/>
+                                </el-select>
+                                <el-button type="success" @click="analyzeRelationship" :loading="relationshipLoading" :disabled="!selectedUser || !relationTargetUser">分析两点关系</el-button>
+                            </div>
+                            <div v-loading="relationshipLoading" element-loading-text="正在分析双节点关系..." style="min-height:100px">
+                                <div v-if="relationshipData">
+                                    <div class="stats-row">
+                                        <div class="stat-box"><div class="stat-value">{{relationshipData.relation_score?.score || 0}}</div><div class="stat-label">关系评分</div></div>
+                                        <div class="stat-box"><div class="stat-value">{{relationshipData.direct_transactions?.count || 0}}</div><div class="stat-label">直接资金笔数</div></div>
+                                        <div class="stat-box"><div class="stat-value">{{relationshipData.chat_relation?.count || 0}}</div><div class="stat-label">聊天记录</div></div>
+                                        <div class="stat-box"><div class="stat-value">{{relationshipData.call_relation?.count || 0}}</div><div class="stat-label">通话记录</div></div>
+                                        <div class="stat-box"><div class="stat-value">{{relationshipData.shared_evidence?.count || 0}}</div><div class="stat-label">共同证据</div></div>
+                                    </div>
+                                    <div class="section-card relation-summary-card" style="margin-top:16px">
+                                        <div class="section-title">关系摘要</div>
+                                        <div class="report-text relation-summary-text">{{relationshipData.relation_summary}}</div>
+                                    </div>
+                                    <div class="section-card" style="margin-top:16px">
+                                        <div class="section-title">关系可视化</div>
+                                        <iframe v-if="relationshipIframeSrc" :src="relationshipIframeSrc" class="graph-iframe relation-iframe" sandbox="allow-scripts"></iframe>
+                                        <div v-else class="empty-hint">暂无可视化结果</div>
+                                    </div>
+                                    <div class="two-col" style="margin-top:16px">
+                                        <div class="section-card">
+                                            <div class="section-title">共同联系人</div>
+                                            <el-table :data="relationshipData.common_contacts || []" stripe size="small">
+                                                <el-table-column prop="name" label="联系人" min-width="120"/>
+                                                <el-table-column label="A侧联系" width="100">
+                                                    <template #default="{row}">{{(row.a_tx_count||0) + (row.a_chat_count||0) + (row.a_call_count||0)}}</template>
+                                                </el-table-column>
+                                                <el-table-column label="B侧联系" width="100">
+                                                    <template #default="{row}">{{(row.b_tx_count||0) + (row.b_chat_count||0) + (row.b_call_count||0)}}</template>
+                                                </el-table-column>
+                                            </el-table>
+                                        </div>
+                                        <div class="section-card">
+                                            <div class="section-title">最短路径</div>
+                                            <div v-if="relationshipData.shortest_path?.exists" class="path-box">
+                                                <div class="path-line">{{(relationshipData.shortest_path.path_names || []).join(' → ')}}</div>
+                                                <div class="text-muted" style="margin-top:8px">路径长度：{{relationshipData.shortest_path.length}}</div>
+                                            </div>
+                                            <div v-else class="empty-hint">当前数据中未找到路径</div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div v-else class="empty-hint">选择第二个节点后即可分析两点关系</div>
+                            </div>
                         </div>
                         <div class="two-col" style="margin-top:16px">
                             <div class="section-card">
