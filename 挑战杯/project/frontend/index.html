@@ -18,6 +18,13 @@
     <script src="https://cdn.bootcdn.net/ajax/libs/axios/1.5.1/axios.min.js"></script>
     <script src="https://cdn.bootcdn.net/ajax/libs/echarts/5.4.3/echarts.min.js"></script>
     <script src="https://cdn.bootcdn.net/ajax/libs/marked/9.1.6/marked.min.js"></script>
+    <!-- 备用 CDN -->
+    <script>
+        // 如果 marked 加载失败，使用备用 CDN
+        if (typeof marked === 'undefined') {
+            document.write('<script src="https://cdn.jsdelivr.net/npm/marked@9.1.6/marked.min.js"><\/script>');
+        }
+    </script>
 </head>
 <body>
     <div id="app" v-cloak>
@@ -38,11 +45,12 @@
                         <span>{{item.label}}</span>
                     </div>
                 </div>
-                <div class="sidebar-stats">
+                <!-- 侧边栏统计信息已隐藏 -->
+                <!-- <div class="sidebar-stats">
                     <div>人员: {{stats.person_count || 0}} 人</div>
                     <div>交易: {{(stats.tx_count||0).toLocaleString()}} 笔</div>
                     <div>银行卡: {{stats.card_count || 0}} 张</div>
-                </div>
+                </div> -->
             </div>
 
             <!-- 主内容区 -->
@@ -438,7 +446,7 @@
                         </div>
                         <div class="two-col" style="margin-top:16px">
                             <div class="section-card">
-                                <div class="section-title">疑似过桥账户(白手套)</div>
+                                <div class="section-title">疑似过桥账户</div>
                                 <div v-if="graphData.bridges?.length">
                                     <div v-for="(b,i) in graphData.bridges" :key="i" class="bridge-item">
                                         <el-tag :type="b.suspicion>0.5?'danger':'warning'" size="small">{{(b.suspicion*100).toFixed(0)}}%</el-tag>
@@ -474,6 +482,9 @@
                                 <el-option v-for="p in persons" :key="p.user_id" :label="p.name+'('+p.user_id+')'" :value="p.user_id"/>
                             </el-select>
                             <el-button type="primary" @click="loadProfile" :loading="profileLoading">生成画像报告</el-button>
+                            <el-button type="danger" @click="generateAIProfile" :loading="aiProfileLoading" :disabled="!selectedUser || !currentCaseId">
+                                🤖 AI深度画像
+                            </el-button>
                         </div>
                     </div>
                     <div v-if="profileData" style="margin-top:16px">
@@ -526,7 +537,19 @@
                             <el-button @click="downloadReport" style="margin-top:12px">下载报告 (.txt)</el-button>
                         </div>
                     </div>
-                    <div v-else class="empty-hint" style="margin-top:40px">请选择分析对象并点击"生成画像报告"</div>
+
+                    <!-- AI 深度画像报告 -->
+                    <div v-if="aiProfileReport" style="margin-top:20px">
+                        <div class="section-card">
+                            <div class="section-title" style="display:flex;justify-content:space-between;align-items:center">
+                                <span>🤖 AI 检察侦查画像报告</span>
+                                <el-button size="small" @click="downloadAIReport">下载报告</el-button>
+                            </div>
+                            <div class="ai-report-container" v-html="renderMd(aiProfileReport)"></div>
+                        </div>
+                    </div>
+
+                    <div v-else class="empty-hint" style="margin-top:40px">请选择分析对象并点击"生成画像报告"或"AI深度画像"</div>
                 </div>
 
                 <!-- ========== AI 智能侦查 ========== -->

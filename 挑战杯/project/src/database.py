@@ -12,7 +12,7 @@ def get_conn() -> sqlite3.Connection:
     """获取数据库连接"""
     DATA_DIR.mkdir(exist_ok=True)
     conn = sqlite3.connect(str(DB_PATH))
-    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA journal_mode=DELETE")  # 使用 DELETE 模式，兼容 SQLite Studio
     conn.execute("PRAGMA foreign_keys=ON")
     return conn
 
@@ -31,13 +31,14 @@ def init_db():
 
         -- 人员表（扩展）
         CREATE TABLE IF NOT EXISTS persons (
-            user_id   TEXT PRIMARY KEY,
+            user_id   TEXT,
             case_id   TEXT,
             name      TEXT,
             id_card   TEXT,
             phone     TEXT,
             reg_time  TEXT,
             role      TEXT,  -- 嫌疑人/证人/涉案人
+            PRIMARY KEY (user_id, case_id),  -- 联合主键：不同案件可以有相同的user_id
             FOREIGN KEY (case_id) REFERENCES cases(case_id)
         );
 
@@ -252,9 +253,9 @@ def get_persons_with_transactions(exclude_companies: bool = False) -> pd.DataFra
     df = pd.read_sql(f"""
         SELECT DISTINCT p.*, COUNT(t.id) as tx_count
         FROM persons p
-        INNER JOIN transactions t ON p.user_id = t.user_id
+        INNER JOIN transactions t ON p.user_id = t.user_id AND p.case_id = t.case_id
         WHERE 1=1 {where_clause}
-        GROUP BY p.user_id
+        GROUP BY p.user_id, p.case_id
         HAVING tx_count > 0
         ORDER BY tx_count DESC
     """, conn)

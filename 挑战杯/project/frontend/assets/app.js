@@ -74,8 +74,8 @@ const app = createApp({
                 const s = await statsPromise;
                 stats.value = s.data;
 
-                // 人员列表可以稍后加载
-                const p = await axios.get(`${API}/persons?case_id=${currentCaseId.value}`);
+                // 人员列表可以稍后加载（不过滤交易记录，返回所有人员）
+                const p = await axios.get(`${API}/persons?case_id=${currentCaseId.value}&with_transactions=false`);
                 persons.value = p.data;
             } catch (e) {
                 console.error('加载案件数据失败:', e);
@@ -677,6 +677,61 @@ const app = createApp({
             URL.revokeObjectURL(url);
         }
 
+        // ==================== AI 侦查画像 ====================
+        const aiProfileReport = ref(null);
+        const aiProfileLoading = ref(false);
+
+        async function generateAIProfile() {
+            if (!selectedUser.value || !currentCaseId.value) {
+                ElementPlus.ElMessage.warning('请先选择案件和分析对象');
+                return;
+            }
+
+            aiProfileLoading.value = true;
+            aiProfileReport.value = null;
+
+            try {
+                ElementPlus.ElMessage.info('正在调用AI分析全案证据，请耐心等待...');
+
+                const formData = new FormData();
+                formData.append('case_id', currentCaseId.value);
+                formData.append('user_id', selectedUser.value);
+
+                const res = await axios.post(`${API}/investigation_profile`, formData);
+
+                if (res.data.success) {
+                    aiProfileReport.value = res.data.report;
+                    ElementPlus.ElMessage.success('AI画像报告生成成功');
+
+                    // 滚动到报告位置
+                    await nextTick();
+                    const reportElement = document.querySelector('.ai-report-container');
+                    if (reportElement) {
+                        reportElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    }
+                } else {
+                    ElementPlus.ElMessage.error('生成报告失败');
+                }
+            } catch (e) {
+                console.error('AI画像生成失败:', e);
+                ElementPlus.ElMessage.error('生成报告失败: ' + (e.response?.data?.detail || e.message));
+            } finally {
+                aiProfileLoading.value = false;
+            }
+        }
+
+        function downloadAIReport() {
+            if (!aiProfileReport.value) return;
+            const blob = new Blob([aiProfileReport.value], { type: 'text/markdown;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            const personName = persons.value.find(p => p.user_id === selectedUser.value)?.name || 'unknown';
+            a.download = `AI侦查画像报告_${personName}_${new Date().toLocaleDateString()}.md`;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
         // ==================== AI Agent ====================
         const chatMessages = ref([]);
         const chatHistory = ref([]);
@@ -785,6 +840,7 @@ const app = createApp({
             relationTargetUser, relationshipData, relationshipLoading, relationshipIframeSrc, analyzeRelationship,
             // 画像
             profileData, profileLoading, profileExpanded, loadProfile, downloadReport,
+            aiProfileReport, aiProfileLoading, generateAIProfile, downloadAIReport,
             // Agent
             chatMessages, chatHistory, chatInput, chatLoading, chatBox,
             providers, agentConfig, showApiKey, currentProviderModels, sampleQuestions,

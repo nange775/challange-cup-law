@@ -177,6 +177,164 @@ def ai_extract_persons(content: str) -> List[Dict]:
     return []
 
 
+def _auto_extract_and_create_persons(df: pd.DataFrame, case_id: str, evidence_type: str = None):
+    """
+    从Excel数据中自动提取人员信息并创建persons记录
+
+    Args:
+        df: DataFrame数据
+        case_id: 案件ID
+        evidence_type: 证据类型（用于推断人员角色）
+    """
+    if df is None or df.empty:
+        return
+
+    # 根据不同证据类型提取不同的人员字段
+    person_name_columns = []
+
+    columns_str = '|'.join([str(c).lower() for c in df.columns])
+
+    # 识别可能包含人名的列
+    if '发送人' in df.columns:
+        person_name_columns.append('发送人')
+    if '接收人' in df.columns:
+        person_name_columns.append('接收人')
+    if '主叫方' in df.columns:
+        person_name_columns.append('主叫方')
+    if '被叫方' in df.columns:
+        person_name_columns.append('被叫方')
+    if '人员' in df.columns:
+        person_name_columns.append('人员')
+    if '用户' in df.columns:
+        person_name_columns.append('用户')
+    if '操作人' in df.columns:
+        person_name_columns.append('操作人')
+
+    # 提取所有人名（去重）
+    person_names = set()
+    for col in person_name_columns:
+        if col in df.columns:
+            names = df[col].dropna().unique()
+            for name in names:
+                name_str = str(name).strip()
+                # 过滤无效名称
+                if name_str and name_str != 'nan' and name_str != 'None' and len(name_str) > 0:
+                    # 过滤时间戳格式（如 "2025-10-01 15:33:00"）
+                    if not _is_timestamp_string(name_str):
+                        person_names.add(name_str)
+
+    if not person_names:
+        return
+
+    # 推断角色
+    default_role = '涉案人'
+    if evidence_type in ['供述', '辩解']:
+        default_role = '嫌疑人'
+    elif evidence_type == '证言':
+        default_role = '证人'
+
+    # 连接数据库
+    conn = get_conn()
+    cursor = conn.cursor()
+
+    created_count = 0
+    existing_count = 0
+
+    for name in person_names:
+        # 生成user_id（使用拼音或简化方式）
+        user_id = _generate_user_id(name)
+
+        # 检查是否已存在
+        existing = cursor.execute(
+            'SELECT COUNT(*) FROM persons WHERE user_id = ?',
+            [user_id]
+        ).fetchone()[0]
+
+        if existing == 0:
+            # 创建新人员记录
+            try:
+                cursor.execute('''
+                    INSERT INTO persons (user_id, case_id, name, role)
+                    VALUES (?, ?, ?, ?)
+                ''', [user_id, case_id, name, default_role])
+                created_count += 1
+            except Exception as e:
+                # 如果user_id冲突，尝试添加后缀
+                for i in range(1, 10):
+                    try:
+                        cursor.execute('''
+                            INSERT INTO persons (user_id, case_id, name, role)
+                            VALUES (?, ?, ?, ?)
+                        ''', [f"{user_id}{i:03d}", case_id, name, default_role])
+                        created_count += 1
+                        break
+                    except:
+                        continue
+        else:
+            existing_count += 1
+
+    conn.commit()
+    conn.close()
+
+    if created_count > 0:
+        print(f'  [自动提取] 创建了 {created_count} 个人员记录')
+    if existing_count > 0:
+        print(f'  [自动提取] {existing_count} 个人员已存在')
+
+
+def _is_timestamp_string(s: str) -> bool:
+    """
+    判断字符串是否为时间戳格式
+
+    Args:
+        s: 待判断的字符串
+
+    Returns:
+        True if是时间戳，False otherwise
+    """
+    import re
+    # 匹配常见的时间戳格式
+    timestamp_patterns = [
+        r'^\d{4}-\d{2}-\d{2}',  # 2025-10-01
+        r'^\d{4}/\d{2}/\d{2}',  # 2025/10/01
+        r'^\d{2}:\d{2}:\d{2}',  # 15:33:00
+    ]
+    return any(re.match(pattern, s) for pattern in timestamp_patterns)
+
+
+def _generate_user_id(name: str) -> str:
+    """
+    根据姓名生成user_id
+
+    Args:
+        name: 姓名
+
+    Returns:
+        user_id字符串
+    """
+    import hashlib
+
+    # 如果是常见姓名格式（2-4个汉字），尝试生成有意义的ID
+    if 2 <= len(name) <= 4 and all('\u4e00' <= c <= '\u9fff' for c in name):
+        try:
+            from pypinyin import lazy_pinyin
+            # 使用拼音生成ID
+            pinyin_parts = lazy_pinyin(name)
+            user_id = ''.join(pinyin_parts).lower()
+            # 限制长度
+            if len(user_id) > 20:
+                user_id = user_id[:20]
+            return user_id + "001"  # 添加后缀避免冲突
+        except ImportError:
+            pass
+
+    # 如果是公司名称或其他，使用hash
+    name_hash = hashlib.md5(name.encode('utf-8')).hexdigest()[:8]
+    # 尝试提取首字母或前几个字符
+    short_name = name[:4] if len(name) <= 10 else name[:2]
+    return f"{short_name}_{name_hash}"
+
+
 # ==================== 证据导入主流程 ====================
 
 def import_evidence(
@@ -217,6 +375,10 @@ def import_evidence(
         else:
             ai_result = ai_classify_evidence(content=text_content, df=df_content)
 
+        # 2.5. 【新增】自动从Excel中提取人员信息并创建persons记录
+        if df_content is not None:
+            _auto_extract_and_create_persons(df_content, case_id, ai_result.get('evidence_type'))
+
         # 3. 生成证据ID
         evidence_id = str(uuid.uuid4())
 
@@ -245,7 +407,17 @@ def import_evidence(
 
         create_evidence(evidence_data)
 
-        # 6. 根据证据类型存入具体表
+        # 6. 先关联人员（供述/证言需要person_id）
+        related_persons = manual_info.get('related_persons', []) if manual_info else []
+        if not related_persons and text_content:
+            # AI提取人名并匹配
+            extracted_persons = ai_extract_persons(text_content)
+            related_persons = _match_persons_to_db(extracted_persons, case_id)
+
+        for person_id in related_persons:
+            link_person_evidence(person_id, evidence_id, '当事人')
+
+        # 7. 根据证据类型存入具体表
         evidence_type = evidence_data['evidence_type']
 
         if evidence_type in ['供述', '辩解', '证言']:
@@ -269,16 +441,6 @@ def import_evidence(
 
         elif evidence_type in ['文书', '鉴定', '笔录', '测谎']:
             _import_document(evidence_id, text_content, evidence_type)
-
-        # 7. 关联人员
-        related_persons = manual_info.get('related_persons', []) if manual_info else []
-        if not related_persons and text_content:
-            # AI提取人名并匹配
-            extracted_persons = ai_extract_persons(text_content)
-            related_persons = _match_persons_to_db(extracted_persons, case_id)
-
-        for person_id in related_persons:
-            link_person_evidence(person_id, evidence_id, '当事人')
 
         return {
             'success': True,

@@ -528,6 +528,31 @@ def api_profile(user_id: str):
     return _clean_for_json(clean)
 
 
+@app.post("/api/investigation_profile")
+def api_investigation_profile(case_id: str = Form(...), user_id: str = Form(...)):
+    """生成检察侦查画像报告（基于全案证据的AI深度分析）"""
+    try:
+        from src.investigation_profiler import generate_investigation_report
+
+        # 解析user_id
+        uid = _resolve_user_id(user_id)
+
+        # 生成报告
+        report = generate_investigation_report(case_id, uid)
+
+        return {
+            "success": True,
+            "report": report,
+            "case_id": case_id,
+            "user_id": uid,
+            "generated_at": datetime.now().isoformat()
+        }
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"生成报告失败: {str(e)}")
+
+
 # ==================== AI Agent ====================
 
 class ChatRequest(BaseModel):

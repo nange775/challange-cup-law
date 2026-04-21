@@ -603,3 +603,114 @@ h2 { font-size: 22px; }
     font-weight: 500;
     border-radius: 8px;
 }
+
+/* ==================== AI 侦查画像报告样式 ==================== */
+.ai-report-container {
+    padding: 24px;
+    background: #ffffff;
+    border-radius: 8px;
+    line-height: 1.8;
+    color: #303133;
+}
+
+.ai-report-container h1 {
+    font-size: 28px;
+    color: #303133;
+    margin: 24px 0 16px 0;
+    padding-bottom: 12px;
+    border-bottom: 3px solid #667eea;
+}
+
+.ai-report-container h2 {
+    font-size: 22px;
+    color: #409eff;
+    margin: 28px 0 16px 0;
+    padding-left: 12px;
+    border-left: 4px solid #409eff;
+}
+
+.ai-report-container h3 {
+    font-size: 18px;
+    color: #606266;
+    margin: 20px 0 12px 0;
+    font-weight: 600;
+}
+
+.ai-report-container h4 {
+    font-size: 16px;
+    color: #909399;
+    margin: 16px 0 8px 0;
+}
+
+.ai-report-container p {
+    margin: 12px 0;
+    text-align: justify;
+}
+
+.ai-report-container strong {
+    color: #f56c6c;
+    font-weight: 600;
+}
+
+.ai-report-container ul, .ai-report-container ol {
+    margin: 12px 0 12px 24px;
+    padding-left: 16px;
+}
+
+.ai-report-container li {
+    margin: 8px 0;
+}
+
+.ai-report-container code {
+    background: #f5f7fa;
+    color: #e83e8c;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-family: 'Courier New', monospace;
+    font-size: 0.95em;
+}
+
+.ai-report-container pre {
+    background: #f5f7fa;
+    padding: 16px;
+    border-radius: 6px;
+    overflow-x: auto;
+    margin: 16px 0;
+    border-left: 4px solid #909399;
+}
+
+.ai-report-container blockquote {
+    background: #fef0f0;
+    border-left: 4px solid #f56c6c;
+    padding: 12px 16px;
+    margin: 16px 0;
+    color: #606266;
+}
+
+.ai-report-container table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 16px 0;
+}
+
+.ai-report-container th, .ai-report-container td {
+    border: 1px solid #dcdfe6;
+    padding: 12px;
+    text-align: left;
+}
+
+.ai-report-container th {
+    background: #f5f7fa;
+    font-weight: 600;
+    color: #303133;
+}
+
+.ai-report-container tr:nth-child(even) {
+    background: #fafafa;
+}
+
+.ai-report-container hr {
+    border: none;
+    border-top: 2px solid #e4e7ed;
+    margin: 24px 0;
+}

@@ -41,6 +41,19 @@ HIGH_FREQ_COUNTERPART_THRESHOLD = 30 # 高频对手方月交易笔数阈值
 LARGE_AMOUNT_THRESHOLD = 500000      # 大额交易阈值(分, 即5000元)
 
 # ============================================================
+# LLM API Keys 配置
+# ============================================================
+# 在这里直接配置 API Key，无需设置环境变量
+# 如果不想在代码中暴露 API Key，可以留空，系统会自动从环境变量读取
+
+ANTHROPIC_API_KEY = ""  # Anthropic Claude API Key
+OPENAI_API_KEY = ""     # OpenAI GPT API Key
+DEEPSEEK_API_KEY = ""   # DeepSeek API Key
+QWEN_API_KEY = "sk-3809d9b01f0b486ea7276e1cfa093a6a"       # 通义千问 API Key（在此填写你的 Key）
+ZHIPU_API_KEY = ""      # 智谱 GLM API Key
+MOONSHOT_API_KEY = ""   # Moonshot Kimi API Key
+
+# ============================================================
 # LLM 多厂商配置
 # ============================================================
 # protocol: "anthropic" 用 anthropic SDK, "openai" 用 openai SDK (兼容大部分国内厂商)
@@ -106,10 +119,21 @@ LLM_PROVIDERS = {
 
 
 def get_provider_api_key(provider_id: str) -> str:
-    """从环境变量读取指定厂商的 API Key"""
+    """读取指定厂商的 API Key（优先读取 config.py 中的变量，其次读取环境变量）"""
     provider = LLM_PROVIDERS.get(provider_id, {})
     env_key = provider.get("env_key", "")
-    return os.environ.get(env_key, "") if env_key else ""
+
+    if not env_key:
+        return ""
+
+    # 1. 优先从 config.py 中读取（检查全局变量）
+    if env_key in globals():
+        api_key = globals()[env_key]
+        if api_key:
+            return api_key
+
+    # 2. 其次从环境变量读取
+    return os.environ.get(env_key, "")
 
 
 # ============================================================
