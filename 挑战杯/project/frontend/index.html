@@ -4,18 +4,36 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>检察侦查画像系统</title>
-    <!-- 使用国内CDN加速 -->
-    <script src="https://cdn.bootcdn.net/ajax/libs/vue/3.3.4/vue.global.prod.min.js"></script>
-    <link rel="stylesheet" href="https://cdn.bootcdn.net/ajax/libs/element-plus/2.4.1/index.min.css">
-    <script src="https://cdn.bootcdn.net/ajax/libs/element-plus/2.4.1/index.full.min.js"></script>
-    <script src="https://cdn.bootcdn.net/ajax/libs/echarts/5.4.3/echarts.min.js"></script>
-    <script src="https://cdn.bootcdn.net/ajax/libs/axios/1.5.1/axios.min.js"></script>
-    <script src="https://cdn.bootcdn.net/ajax/libs/marked/9.1.6/marked.min.js"></script>
+    <!-- 使用国内CDN加速 + 预连接优化 -->
+    <link rel="preconnect" href="https://cdn.bootcdn.net">
+    <link rel="dns-prefetch" href="https://cdn.bootcdn.net">
+
+    <!-- 关键CSS优先加载 -->
     <link rel="stylesheet" href="assets/style.css">
+    <link rel="stylesheet" href="https://cdn.bootcdn.net/ajax/libs/element-plus/2.4.1/index.min.css">
+
+    <!-- 核心JS - 同步加载确保顺序 -->
+    <script src="https://cdn.bootcdn.net/ajax/libs/vue/3.3.4/vue.global.prod.min.js"></script>
+    <script src="https://cdn.bootcdn.net/ajax/libs/element-plus/2.4.1/index.full.min.js"></script>
+    <script src="https://cdn.bootcdn.net/ajax/libs/axios/1.5.1/axios.min.js"></script>
+    <script src="https://cdn.bootcdn.net/ajax/libs/echarts/5.4.3/echarts.min.js"></script>
+    <script src="https://cdn.bootcdn.net/ajax/libs/marked/9.1.6/marked.min.js"></script>
+    <!-- 备用 CDN -->
+    <script>
+        // 如果 marked 加载失败，使用备用 CDN
+        if (typeof marked === 'undefined') {
+            document.write('<script src="https://cdn.jsdelivr.net/npm/marked@9.1.6/marked.min.js"><\/script>');
+        }
+    </script>
 </head>
 <body>
-    <div id="app">
-        <div class="layout">
+    <div id="app" v-cloak>
+        <!-- 全局加载动画 -->
+        <div v-if="isLoading" class="global-loading">
+            <div class="loading-spinner"></div>
+            <div class="loading-text">正在加载数据...</div>
+        </div>
+        <div class="layout" v-show="!isLoading">
             <!-- 侧边栏 -->
             <div class="sidebar">
                 <div class="logo">检察侦查画像系统</div>
@@ -27,11 +45,12 @@
                         <span>{{item.label}}</span>
                     </div>
                 </div>
-                <div class="sidebar-stats">
+                <!-- 侧边栏统计信息已隐藏 -->
+                <!-- <div class="sidebar-stats">
                     <div>人员: {{stats.person_count || 0}} 人</div>
                     <div>交易: {{(stats.tx_count||0).toLocaleString()}} 笔</div>
                     <div>银行卡: {{stats.card_count || 0}} 张</div>
-                </div>
+                </div> -->
             </div>
 
             <!-- 主内容区 -->
@@ -75,9 +94,9 @@
                 <div v-if="currentPage==='import'" class="page">
                     <div class="page-header"><h2>数据导入</h2></div>
 
-                    <!-- 多格式数据导入 -->
+                    <!-- 统一证据导入 -->
                     <div class="section-card" style="margin-top:20px">
-                        <div class="section-title">多格式证据导入</div>
+                        <div class="section-title">证据数据导入</div>
                         <div class="upload-area">
                             <div class="upload-row">
                                 <div class="upload-item" style="flex:1">
@@ -91,9 +110,10 @@
                                         </template>
                                         <template #tip>
                                             <div class="upload-tip">
-                                                <strong>支持格式:</strong> PDF, Word, Excel, TXT, 图片(JPG/PNG/TIFF)<br>
-                                                <strong>财付通数据:</strong> 请同时上传 TenpayTrades.xls (交易明细) 和 TenpayRegInfo1.xls (注册信息)<br>
-                                                <span style="color:#f56c6c">图片文件将自动进行OCR文字识别</span>
+                                                <strong>✅ 支持格式:</strong> 财付通XLS、Excel、PDF、Word、图片(JPG/PNG/TIFF)<br>
+                                                <strong>✅ 智能识别:</strong> 自动识别文件类型、提取关键信息并关联案件<br>
+                                                <strong>⚠️ 财付通数据:</strong> 需同时上传交易明细(TenpayTrades.xls) + 注册信息(TenpayRegInfo1.xls)<br>
+                                                <strong>🔍 OCR识别:</strong> 图片文件将自动进行文字识别并提取结构化数据
                                             </div>
                                         </template>
                                     </el-upload>
@@ -177,73 +197,65 @@
                         </div>
                     </div>
 
-                    <!-- 传统财付通导入 -->
-                    <div class="section-card" style="margin-top:20px">
-                        <div class="section-title">财付通数据导入（传统方式）</div>
-                        <el-tabs v-model="importTab">
-                            <el-tab-pane label="手动上传" name="upload">
-                                <div class="upload-area">
-                                    <div class="upload-row">
-                                        <div class="upload-item">
-                                            <div class="upload-label">交易明细文件</div>
-                                            <el-upload ref="tradesUpload" :auto-upload="false" :limit="1" accept=".xls,.xlsx"
-                                                :on-change="(f)=>{uploadFiles.trades=f.raw}" :on-remove="()=>{uploadFiles.trades=null}">
-                                                <template #trigger>
-                                                    <el-button type="primary">选择 TenpayTrades.xls</el-button>
-                                                </template>
-                                                <template #tip><div class="upload-tip">支持 .xls / .xlsx 格式</div></template>
-                                            </el-upload>
-                                        </div>
-                                        <div class="upload-item">
-                                            <div class="upload-label">注册信息文件</div>
-                                            <el-upload ref="regUpload" :auto-upload="false" :limit="1" accept=".xls,.xlsx"
-                                                :on-change="(f)=>{uploadFiles.reg=f.raw}" :on-remove="()=>{uploadFiles.reg=null}">
-                                                <template #trigger>
-                                                    <el-button type="primary">选择 TenpayRegInfo1.xls</el-button>
-                                                </template>
-                                                <template #tip><div class="upload-tip">支持 .xls / .xlsx 格式</div></template>
-                                            </el-upload>
-                                        </div>
-                                    </div>
-                                    <el-button type="success" size="large" @click="doUpload" :loading="uploading"
-                                        :disabled="!uploadFiles.trades||!uploadFiles.reg" style="margin-top:20px">
-                                        导入数据
-                                    </el-button>
-                                </div>
-                            </el-tab-pane>
-                            <el-tab-pane label="自动扫描目录" name="scan">
-                                <div style="display:flex;gap:12px;align-items:flex-start;margin-top:12px">
-                                    <el-input v-model="scanDir" placeholder="输入包含 Tenpay 数据的目录路径" style="flex:1" size="large"/>
-                                    <el-button type="success" size="large" @click="doScan" :loading="scanning">扫描并导入</el-button>
-                                </div>
-                            </el-tab-pane>
-                        </el-tabs>
-                    </div>
 
                     <div class="section-card" style="margin-top:20px">
-                        <div class="section-title">当前数据概览</div>
-                        <div class="stats-row">
-                            <div class="stat-box">
-                                <div class="stat-value">{{stats.person_count || 0}}</div>
-                                <div class="stat-label">已录入人员</div>
+                        <div class="section-title">当前案件数据概览</div>
+                        <div v-if="currentCaseId">
+                            <!-- 数据统计卡片 -->
+                            <div class="stats-row">
+                                <div class="stat-box">
+                                    <div class="stat-icon">👥</div>
+                                    <div>
+                                        <div class="stat-value">{{stats.person_count || 0}}</div>
+                                        <div class="stat-label">涉案人员</div>
+                                    </div>
+                                </div>
+                                <div class="stat-box">
+                                    <div class="stat-icon">💰</div>
+                                    <div>
+                                        <div class="stat-value">{{(stats.tx_count||0).toLocaleString()}}</div>
+                                        <div class="stat-label">交易记录</div>
+                                    </div>
+                                </div>
+                                <div class="stat-box">
+                                    <div class="stat-icon">💳</div>
+                                    <div>
+                                        <div class="stat-value">{{stats.card_count || 0}}</div>
+                                        <div class="stat-label">银行卡</div>
+                                    </div>
+                                </div>
+                                <div class="stat-box">
+                                    <div class="stat-icon">📄</div>
+                                    <div>
+                                        <div class="stat-value">{{stats.evidence_count || 0}}</div>
+                                        <div class="stat-label">证据文件</div>
+                                    </div>
+                                </div>
                             </div>
-                            <div class="stat-box">
-                                <div class="stat-value">{{(stats.tx_count||0).toLocaleString()}}</div>
-                                <div class="stat-label">交易记录</div>
-                            </div>
-                            <div class="stat-box">
-                                <div class="stat-value">{{stats.card_count || 0}}</div>
-                                <div class="stat-label">银行卡</div>
+
+                            <!-- 快速操作 -->
+                            <div class="quick-actions" v-if="persons.length > 0">
+                                <div class="quick-action-title">快速开始分析</div>
+                                <div class="quick-action-buttons">
+                                    <el-button type="primary" @click="currentPage='analysis'">
+                                        📊 交易分析
+                                    </el-button>
+                                    <el-button type="success" @click="currentPage='graph'">
+                                        🕸️ 关系图谱
+                                    </el-button>
+                                    <el-button type="warning" @click="currentPage='profile'">
+                                        👤 人员画像
+                                    </el-button>
+                                    <el-button type="info" @click="currentPage='agent'">
+                                        🤖 AI 侦查
+                                    </el-button>
+                                </div>
                             </div>
                         </div>
-                        <el-table :data="persons" stripe border style="width:100%;margin-top:16px" v-if="persons.length">
-                            <el-table-column prop="user_id" label="用户ID" width="130"/>
-                            <el-table-column prop="name" label="姓名" width="100"/>
-                            <el-table-column prop="id_card" label="身份证号" width="210"/>
-                            <el-table-column prop="phone" label="手机号" width="150"/>
-                            <el-table-column prop="reg_time" label="注册时间" min-width="180"/>
-                        </el-table>
-                        <div v-else class="empty-hint">暂无数据, 请先导入。</div>
+                        <div v-else class="empty-hint">
+                            <div style="font-size:48px;margin-bottom:16px">📂</div>
+                            <div style="font-size:16px;color:#909399">请先选择或创建案件</div>
+                        </div>
                     </div>
 
                     <div class="section-card" style="margin-top:20px">
@@ -253,6 +265,24 @@
                             </template>
                         </el-popconfirm>
                     </div>
+
+                    <!-- 新建案件对话框 -->
+                    <el-dialog v-model="showCreateCaseDialog" title="新建案件" width="500px">
+                        <div style="display:flex;flex-direction:column;gap:20px">
+                            <div>
+                                <div style="margin-bottom:8px;font-weight:500">案件编号 <span style="color:#f56c6c">*</span></div>
+                                <el-input v-model="newCaseId" placeholder="例如: CASE_2026_001" clearable></el-input>
+                            </div>
+                            <div>
+                                <div style="margin-bottom:8px;font-weight:500">案件名称 <span style="color:#f56c6c">*</span></div>
+                                <el-input v-model="newCaseName" placeholder="例如: 张三涉嫌诈骗案" clearable></el-input>
+                            </div>
+                        </div>
+                        <template #footer>
+                            <el-button @click="showCreateCaseDialog=false">取消</el-button>
+                            <el-button type="primary" @click="doCreateCase" :loading="creatingCase" :disabled="!newCaseId||!newCaseName">创建</el-button>
+                        </template>
+                    </el-dialog>
                 </div>
 
                 <!-- ========== 交易分析 ========== -->
@@ -416,7 +446,7 @@
                         </div>
                         <div class="two-col" style="margin-top:16px">
                             <div class="section-card">
-                                <div class="section-title">疑似过桥账户(白手套)</div>
+                                <div class="section-title">疑似过桥账户</div>
                                 <div v-if="graphData.bridges?.length">
                                     <div v-for="(b,i) in graphData.bridges" :key="i" class="bridge-item">
                                         <el-tag :type="b.suspicion>0.5?'danger':'warning'" size="small">{{(b.suspicion*100).toFixed(0)}}%</el-tag>
@@ -452,6 +482,9 @@
                                 <el-option v-for="p in persons" :key="p.user_id" :label="p.name+'('+p.user_id+')'" :value="p.user_id"/>
                             </el-select>
                             <el-button type="primary" @click="loadProfile" :loading="profileLoading">生成画像报告</el-button>
+                            <el-button type="danger" @click="generateAIProfile" :loading="aiProfileLoading" :disabled="!selectedUser || !currentCaseId">
+                                🤖 AI深度画像
+                            </el-button>
                         </div>
                     </div>
                     <div v-if="profileData" style="margin-top:16px">
@@ -504,7 +537,19 @@
                             <el-button @click="downloadReport" style="margin-top:12px">下载报告 (.txt)</el-button>
                         </div>
                     </div>
-                    <div v-else class="empty-hint" style="margin-top:40px">请选择分析对象并点击"生成画像报告"</div>
+
+                    <!-- AI 深度画像报告 -->
+                    <div v-if="aiProfileReport" style="margin-top:20px">
+                        <div class="section-card">
+                            <div class="section-title" style="display:flex;justify-content:space-between;align-items:center">
+                                <span>🤖 AI 检察侦查画像报告</span>
+                                <el-button size="small" @click="downloadAIReport">下载报告</el-button>
+                            </div>
+                            <div class="ai-report-container" v-html="renderMd(aiProfileReport)"></div>
+                        </div>
+                    </div>
+
+                    <div v-else class="empty-hint" style="margin-top:40px">请选择分析对象并点击"生成画像报告"或"AI深度画像"</div>
                 </div>
 
                 <!-- ========== AI 智能侦查 ========== -->
